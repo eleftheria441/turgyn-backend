@@ -325,19 +325,22 @@ tfoot td{padding:11px 12px;border-top:2px solid var(--line2);font-weight:800;bac
 .lp-hero>*{position:relative;z-index:1}
 @media(prefers-reduced-motion:reduce){.blob{animation:none}}
 
-.tagpill{animation:pillIn .6s ease both}
+/* Текст ВСЕГДА виден по умолчанию (opacity:1) — анимация появления это только бонус
+   для браузеров без отключённых анимаций, и никогда не может скрыть контент навсегда. */
+.tagpill,.lp-hero h1,.lp-hero p.lead,.lp-cta,.hero-note{opacity:1}
+.reveal,.reveal.in,.reveal-stagger .r-item{opacity:1;transform:none}
 @keyframes pillIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
-.lp-hero h1{animation:riseIn .7s ease .05s both}
-.lp-hero p.lead{animation:riseIn .7s ease .15s both}
-.lp-cta{animation:riseIn .7s ease .25s both}
-.hero-note{animation:riseIn .7s ease .32s both}
 @keyframes riseIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
-
-.reveal{opacity:0;transform:translateY(28px);transition:opacity .7s ease,transform .7s ease}
-@keyframes forceReveal{to{opacity:1;transform:none}}
-.reveal{animation:forceReveal .01s linear 2s forwards} /* чистая CSS-страховка: элемент проявится сам максимум через 2с, даже если JS не сработал */
-.reveal.in{opacity:1;transform:none}
-.reveal-stagger.in .r-item{animation:riseIn .55s ease both}
+@media(prefers-reduced-motion:no-preference){
+  .tagpill{animation:pillIn .6s ease both}
+  .lp-hero h1{animation:riseIn .7s ease .05s both}
+  .lp-hero p.lead{animation:riseIn .7s ease .15s both}
+  .lp-cta{animation:riseIn .7s ease .25s both}
+  .hero-note{animation:riseIn .7s ease .32s both}
+  .reveal{opacity:0;transform:translateY(28px);transition:opacity .7s ease,transform .7s ease}
+  .reveal.in{opacity:1;transform:none}
+  .reveal-stagger.in .r-item{animation:riseIn .55s ease both}
+}
 .reveal-stagger .r-item:nth-child(1){animation-delay:.02s}.reveal-stagger .r-item:nth-child(2){animation-delay:.09s}
 .reveal-stagger .r-item:nth-child(3){animation-delay:.16s}.reveal-stagger .r-item:nth-child(4){animation-delay:.23s}
 .reveal-stagger .r-item:nth-child(5){animation-delay:.30s}.reveal-stagger .r-item:nth-child(6){animation-delay:.37s}
