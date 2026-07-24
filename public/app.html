@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Turgyn App — приложение жителя</title>
+<style>
+:root{
+  --bg:#0c2a24; --card:#ffffff; --line:#e6eef0;
+  --txt:#12343b; --mut:#5e7681; --mut2:#93a7ad;
+  --brand:#18c39a; --brand-d:#0f9a7d;
+  --ink:#10352a; --mint:#3fe6c0;
+  --ok:#12a150; --warn:#d98a0b; --bad:#e0484b; --info:#2f8fe0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:'Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif;background:#0c2a24;color:var(--txt);font-size:14px}
+::-webkit-scrollbar{width:0;height:0}
+button{font-family:inherit;cursor:pointer}
+input,select,textarea{font-family:inherit}
+
+/* device frame for desktop preview, edge-to-edge on real phones */
+#frame{max-width:430px;min-height:100vh;margin:0 auto;background:linear-gradient(180deg,#f5f9fa,#eef6f6);
+  position:relative;box-shadow:0 0 60px rgba(0,0,0,.35);display:flex;flex-direction:column}
+@media(min-width:431px){body{padding:22px 0}#frame{border-radius:34px;overflow:hidden;min-height:min(860px,92vh)}}
+
+.hidden{display:none!important}
+.scr{flex:1;overflow-y:auto;padding-bottom:78px;-webkit-overflow-scrolling:touch}
+
+/* ---- auth ---- */
+#auth{flex:1;display:flex;flex-direction:column;justify-content:center;padding:32px 26px;background:
+  radial-gradient(600px 300px at 50% -10%,#1a4a3f,transparent 60%),#0c2a24;color:#eafaf5;min-height:100vh}
+.a-logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:22px;margin-bottom:8px;justify-content:center}
+.a-logo .m{width:38px;height:38px;border-radius:10px;background:#10352a;display:grid;place-items:center}
+.a-logo b{color:#fff}.a-logo span{color:var(--mint)}
+#auth p.sub{text-align:center;color:#9fd8c8;font-size:13px;margin-bottom:30px}
+#auth label{display:block;font-size:12px;color:#9fd8c8;margin:14px 0 6px}
+#auth input,#auth select{width:100%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);
+  color:#fff;border-radius:10px;padding:12px 13px;font-size:14px;outline:none}
+#auth input::placeholder{color:#7fa89b}
+#auth input:focus{border-color:var(--mint)}
+.a-btn{width:100%;margin-top:22px;background:var(--mint);color:#04231f;border:none;border-radius:11px;
+  padding:13px;font-weight:800;font-size:14.5px}
+.a-hint{margin-top:16px;text-align:center;color:#7fa89b;font-size:12px;line-height:1.6}
+.a-list{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+.a-opt{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:11px 13px;cursor:pointer}
+.a-opt:hover{border-color:var(--mint)}
+.a-opt b{color:#fff;font-size:13.5px;display:block}.a-opt span{color:#9fd8c8;font-size:11.5px}
+.a-demo{margin-top:10px;background:transparent;border:1px dashed rgba(255,255,255,.3);color:#9fd8c8;border-radius:10px;
+  padding:10px;width:100%;font-size:12.5px}
+
+/* ---- header ---- */
+.hdr{padding:16px 18px 14px;display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#12352c,#0c2a24);color:#eafaf5}
+.hdr .who b{display:block;font-size:14.5px}.hdr .who span{font-size:11.5px;color:#9fd8c8}
+.hdr .sp{flex:1}
+.hdr .ic-btn{width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.1);display:grid;place-items:center;color:#eafaf5;border:none}
+
+.content{padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px}
+.hr{height:1px;background:var(--line);margin:12px 0}
+.muted{color:var(--mut)}.small{font-size:12px}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px}
+.pill.ok{background:rgba(18,161,80,.12);color:#0f8f47}
+.pill.warn{background:rgba(217,138,11,.14);color:#b9740a}
+.pill.bad{background:rgba(224,72,75,.12);color:#c73c3f}
+.pill.info{background:rgba(47,143,224,.12);color:#2170b8}
+
+.bal-card{background:linear-gradient(135deg,#12352c,#0c2a24);border-radius:18px;padding:18px 20px;color:#eafaf5;margin-bottom:14px}
+.bal-card .l{font-size:11.5px;color:#9fd8c8}
+.bal-card .v{font-size:28px;font-weight:800;margin-top:4px;letter-spacing:-.5px}
+.bal-card .row{display:flex;gap:10px;margin-top:14px}
+.bal-card button{flex:1;border:none;border-radius:11px;padding:11px;font-weight:800;font-size:13px}
+.bal-card .pay{background:var(--mint);color:#04231f}
+.bal-card .req{background:rgba(255,255,255,.12);color:#eafaf5}
+
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 10px;text-align:center}
+.tile .ic{width:32px;height:32px;border-radius:9px;background:#e3f6f3;color:#0f9a7d;display:grid;place-items:center;margin:0 auto 8px}
+.tile b{font-size:11.5px;display:block}.tile span{font-size:10px;color:var(--mut2)}
+
+.row-item{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
+.row-item:last-child{border-bottom:none}
+.row-item .ic{width:32px;height:32px;border-radius:9px;background:#eef6f6;color:#0f9a7d;display:grid;place-items:center;flex:none}
+.row-item b{font-size:12.5px;display:block}.row-item span{font-size:11px;color:var(--mut2)}
+.row-item .amt{margin-left:auto;font-weight:800;font-size:13px}
+
+.ai-note{background:linear-gradient(135deg,#fff7e8,#fffdf7);border:1px solid #f3e0b5;border-radius:14px;padding:12px 14px;display:flex;gap:9px;margin-bottom:14px}
+.ai-note b{font-size:11.5px;color:#8a5a06;display:block;margin-bottom:2px}.ai-note p{font-size:12px;color:#7a6a4a;line-height:1.5}
+
+h2.pt{font-size:16px;margin-bottom:4px}
+p.ps{color:var(--mut);font-size:12.5px;margin-bottom:14px}
+
+.seg{display:flex;background:#eef6f6;border-radius:10px;padding:3px;gap:2px;margin-bottom:14px}
+.seg button{flex:1;background:transparent;border:none;color:var(--mut);padding:8px;border-radius:8px;font-size:12.5px;font-weight:700}
+.seg button.on{background:#fff;color:var(--txt);box-shadow:0 2px 6px rgba(0,0,0,.06)}
+
+textarea,select.f,input.f{width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 12px;font-size:13.5px;outline:none;background:#fff}
+textarea:focus,select.f:focus,input.f:focus{border-color:var(--brand)}
+label.f{display:block;margin-bottom:12px}
+label.f span{display:block;font-size:12px;color:var(--mut);margin-bottom:5px;font-weight:600}
+.btn-main{width:100%;background:var(--brand);color:#04231f;border:none;border-radius:11px;padding:12px;font-weight:800;font-size:13.5px}
+.btn-gho{width:100%;background:#eef6f6;color:var(--txt);border:none;border-radius:11px;padding:12px;font-weight:700;font-size:13.5px}
+
+.empty{text-align:center;padding:36px 16px;color:var(--mut2)}
+.empty .ic{width:44px;height:44px;margin:0 auto 12px;opacity:.5}
+
+/* chat */
+.chat-wrap{display:flex;flex-direction:column;height:calc(100vh - 168px)}
+.chat-log{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:82%;padding:10px 13px;border-radius:14px;font-size:13px;line-height:1.5}
+.msg.bot{background:#fff;border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:4px}
+.msg.me{background:var(--brand);color:#04231f;align-self:flex-end;border-bottom-right-radius:4px;font-weight:600}
+.chat-sugg{display:flex;gap:7px;flex-wrap:wrap;padding:0 14px 10px}
+.chip-sugg{background:#e3f6f3;color:#0f9a7d;border:1px solid #c3e9e3;border-radius:20px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer}
+.chat-in{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--line);background:#fff}
+.chat-in input{flex:1;border:1px solid var(--line);border-radius:20px;padding:10px 14px;font-size:13px;outline:none}
+.chat-in button{background:var(--brand);color:#04231f;border:none;border-radius:50%;width:38px;height:38px;flex:none}
+
+/* bottom nav */
+.bnav{position:absolute;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);display:flex;
+  justify-content:space-around;padding:9px 4px calc(10px + env(safe-area-inset-bottom))}
+.bnav .it{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;color:var(--mut2);font-weight:700;
+  background:none;border:none;padding:4px 8px}
+.bnav .it.on{color:var(--brand-d)}
+.bnav .it svg{width:20px;height:20px}
+.badge-dot{position:relative}
+.badge-dot::after{content:'';position:absolute;top:-1px;right:2px;width:7px;height:7px;border-radius:50%;background:var(--bad);border:1.5px solid #fff}
+
+/* modal */
+.mbg{position:fixed;inset:0;background:rgba(12,42,36,.5);display:flex;align-items:flex-end;z-index:80}
+.msheet{width:100%;max-width:430px;margin:0 auto;background:#fff;border-radius:20px 20px 0 0;padding:20px;animation:up .2s ease}
+@keyframes up{from{transform:translateY(20px);opacity:0}to{transform:none;opacity:1}}
+.msheet h3{font-size:15.5px;margin-bottom:12px}
+#toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:99;display:flex;flex-direction:column;gap:8px;width:calc(100% - 40px);max-width:390px}
+.toast{background:#12352c;color:#eafaf5;border-radius:12px;padding:11px 15px;font-size:12.5px;text-align:center;box-shadow:0 10px 24px rgba(0,0,0,.25)}
+</style>
+</head>
+<body>
+<div id="frame">
+
+  <!-- AUTH -->
+  <div id="auth">
+    <div class="a-logo"><span class="m"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3fe6c0" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5 12 4.5l7.5 6"/><path d="M8.2 11.5v3.6a3.8 3.8 0 0 0 7.6 0v-3.6"/></svg></span><span><b>tur</b><span>gyn</span> app</span></div>
+    <p class="sub">Приложение жителя · баланс, оплата, заявки, ИИ-помощник</p>
+    <label>Номер телефона или лицевой счёт</label>
+    <input id="au-key" placeholder="+7 777 ... или № л/с" autocomplete="off">
+    <button class="a-btn" onclick="authFind()">Войти</button>
+    <div id="au-results" class="a-list"></div>
+    <button class="a-demo" onclick="authDemo()">Войти в демо-режиме (кв. 24, ЖК «Алатау»)</button>
+    <div class="a-hint">Приложение использует ту же базу данных, что и веб-кабинет УК Turgyn, открытый в этом браузере.<br>Заявка, поданная здесь, сразу видна диспетчеру.</div>
+  </div>
+
+  <!-- APP -->
+  <div id="app" class="hidden" style="display:flex;flex-direction:column;min-height:100vh;position:relative">
+    <div class="hdr">
+      <div class="who"><b id="h-name">—</b><span id="h-addr">—</span></div>
+      <div class="sp"></div>
+      <button class="ic-btn" title="Уведомления" onclick="tab('notif')">🔔</button>
+    </div>
+    <div class="scr" id="scr"></div>
+    <div class="bnav">
+      <button class="it on" data-t="home" onclick="tab('home')">🏠<span>Главная</span></button>
+      <button class="it" data-t="bills" onclick="tab('bills')">🧾<span>Начисления</span></button>
+      <button class="it" data-t="req" onclick="tab('req')">🛠<span>Заявки</span></button>
+      <button class="it" data-t="ai" onclick="tab('ai')">✦<span>ИИ-чат</span></button>
+      <button class="it" data-t="profile" onclick="tab('profile')">👤<span>Профиль</span></button>
+    </div>
+  </div>
+
+</div>
+<div id="modal-root"></div>
+<div id="toast"></div>
+
+<script>
+const KEY='domsfera_db_v1';
+const SESSKEY='turgyn_app_session';
+let API_MODE=false;
+let DB=null, SESS=null, STATE=null, CHAT=[];
+
+/* ---------- общие утилиты ---------- */
+function uid(p){return (p||'id')+'_'+Math.random().toString(36).slice(2,9);}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function money(n){n=Math.round(n||0);return n.toLocaleString('ru-RU')+' ₸';}
+function today(){return new Date().toISOString().slice(0,10);}
+function toast(msg){const t=document.createElement('div');t.className='toast';t.textContent=msg;
+  document.getElementById('toast').appendChild(t);setTimeout(()=>t.remove(),2600);}
+function perName(p){if(!p)return'';const ru=['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const parts=String(p).split('-');return parts[1]?ru[+parts[1]]+' '+parts[0]:p;}
+
+/* ---------- вызовы backend API (относительные пути — работает, когда файл открыт с того же сервера) ---------- */
+async function apiCall(path,method,body){
+  const headers={'Content-Type':'application/json'};
+  if(SESS&&SESS.token)headers['Authorization']='Bearer '+SESS.token;
+  const r=await fetch(path,{method:method||'GET',headers,body:body?JSON.stringify(body):undefined});
+  let data={};try{data=await r.json();}catch(e){}
+  if(!r.ok){const err=new Error(data.error||'Ошибка сервера');err.api=true;err.status=r.status;throw err;}
+  return data;
+}
+
+/* ================= ЛОКАЛЬНЫЙ РЕЖИМ (без backend, демо в одном браузере) ================= */
+function loadDB(){try{return JSON.parse(localStorage.getItem(KEY));}catch(e){return null;}}
+function saveDB(){try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){}}
+function ensureDB(){
+  DB=loadDB();
+  if(DB&&DB.osi&&DB.osi.length)return;
+  const oid=uid('osi');
+  DB={org:{name:'ТОО «Управляющая компания»',bin:'123456789012',city:'Астана'},
+    subscription:{plan:'uk',pricePerAccount:35,since:'2026-01-01',status:'active'},
+    users:[{id:'u1',name:'Ильяс Директоров',login:'admin',pass:'admin',role:'director',pos:'Директор УК'}],
+    osi:[{id:oid,name:'ЖК «Алатау»',address:'Астана, пр. Кабанбай батыра 40',bin:'990101300111',chairman:'Нурлан Председатель',phone:'+7 702 111 22 33',createdAt:'2026-01-15',active:true}],
+    houses:[{id:uid('h'),osiId:oid,address:'Астана, пр. Кабанбай батыра 40',floors:9,entrances:2,totalArea:400}],
+    accounts:[], services:[], accruals:[], payments:[], providers:[], provInvoices:[], provPayments:[], requests:[]};
+  const svc=[{name:'Содержание жилья (эксплуатационные)',unit:'m2',tariff:44.6},
+    {name:'Целевой накопительный взнос',unit:'m2',tariff:21.63},
+    {name:'Вывоз ТБО',unit:'apt',tariff:600}];
+  const svcIds=svc.map(s=>{const id=uid('svc');DB.services.push({id,osiId:oid,...s,active:true});return id;});
+  const acc={id:uid('acc'),osiId:oid,houseId:DB.houses[0].id,ls:'demo24',apt:'24',floor:6,area:58.4,
+    owner:'Айгерим Ахметова',phone:'+7 777 123 45 67',persons:3,saldoStart:0};
+  DB.accounts.push(acc);
+  ['2026-05','2026-06','2026-07'].forEach(per=>{
+    let tot=0;svcIds.forEach(sid=>{const s=DB.services.find(x=>x.id===sid);
+      const base=s.unit==='m2'?acc.area:1;const amount=Math.round(s.tariff*base);tot+=amount;
+      DB.accruals.push({id:uid('acr'),osiId:oid,accountId:acc.id,serviceId:sid,period:per,amount,base,unit:s.unit,createdAt:per+'-01'});});
+    if(per!=='2026-07')DB.payments.push({id:uid('pay'),osiId:oid,accountId:acc.id,period:per,amount:tot,method:'kaspi',date:per+'-14'});
+    else DB.payments.push({id:uid('pay'),osiId:oid,accountId:acc.id,period:per,amount:Math.round(tot*0.35),method:'kaspi',date:per+'-05'});
+  });
+  DB.requests.push({id:uid('req'),osiId:oid,accountId:acc.id,topic:'Не работает домофон',status:'work',assignee:'Ерлан',date:'2026-07-10'});
+  saveDB();
+}
+function curAccLocal(){return DB.accounts.find(a=>a.id===SESS.accountId);}
+function curOsiLocal(){const a=curAccLocal();return DB.osi.find(o=>o.id===a.osiId);}
+function buildStateFromLocal(){
+  const a=curAccLocal();
+  STATE={account:a,osi:curOsiLocal(),
+    services:DB.services.filter(s=>s.osiId===a.osiId),
+    accruals:DB.accruals.filter(x=>x.accountId===a.id),
+    payments:DB.payments.filter(x=>x.accountId===a.id),
+    requests:DB.requests.filter(x=>x.accountId===a.id)};
+}
+
+/* ================= единый доступ к данным через STATE (общий для API- и локального режима) ================= */
+function stAccIdx(){const idx={};
+  STATE.accruals.forEach(a=>{const p=idx[a.period]=idx[a.period]||{a:0,pay:0,s:{}};p.a+=a.amount;p.s[a.serviceId]=(p.s[a.serviceId]||0)+a.amount;});
+  STATE.payments.forEach(x=>{const p=idx[x.period]=idx[x.period]||{a:0,pay:0,s:{}};p.pay+=x.amount;});
+  return idx;}
+function stBalance(){let b=(STATE.account.saldoStart||0);const idx=stAccIdx();for(const p in idx)b+=idx[p].a-idx[p].pay;return b;}
+function stPeriods(){return Object.keys(stAccIdx()).sort().reverse();}
+function stService(id){return STATE.services.find(s=>s.id===id);}
+
+/* ================= AUTH ================= */
+async function authFind(){
+  const q=document.getElementById('au-key').value.trim();
+  if(!q){toast('Введите телефон или лицевой счёт');return;}
+  try{
+    const data=await apiCall('/api/resident/login','POST',{query:q});
+    if(data.matches&&data.matches.length){renderMatches(data.matches);return;}
+    if(data.token){SESS={token:data.token};localStorage.setItem(SESSKEY,JSON.stringify(SESS));API_MODE=true;await enterApi();}
+  }catch(err){
+    if(err.api){ // бэкенд отвечает, но не нашёл / отклонил
+      document.getElementById('au-results').innerHTML='<div class="a-opt" style="cursor:default"><b>Не найдено</b><span>'+esc(err.message)+'</span></div>';
+    }else{ // бэкенд недоступен (сеть/CORS) — работаем в локальном демо-режиме этого браузера
+      authFindLocal(q);
+    }
+  }
+}
+function renderMatches(matches){
+  document.getElementById('au-results').innerHTML=matches.map(m=>
+    '<div class="a-opt" onclick="authPick(\''+m.id+'\')"><b>кв. '+esc(m.apt)+' · '+esc(m.owner)+'</b><span>'+esc(m.osiName)+'</span></div>').join('');
+}
+async function authPick(accountId){
+  try{const data=await apiCall('/api/resident/login','POST',{accountId});
+    SESS={token:data.token};localStorage.setItem(SESSKEY,JSON.stringify(SESS));API_MODE=true;await enterApi();
+  }catch(e){toast('Не удалось войти');}
+}
+function authFindLocal(q){
+  ensureDB();
+  const digits=q.replace(/\D/g,'');
+  const matches=DB.accounts.filter(a=>{const ph=(a.phone||'').replace(/\D/g,'');
+    return (digits.length>=4&&ph.indexOf(digits)>=0)||String(a.ls||'').trim()===q.trim()||String(a.apt||'').trim()===q.trim();});
+  const box=document.getElementById('au-results');
+  if(!matches.length){box.innerHTML='<div class="a-opt" style="cursor:default"><b>Не найдено</b><span>Сервер недоступен — поиск выполнен по локальным демо-данным браузера. Попробуйте демо-режим ниже.</span></div>';return;}
+  box.innerHTML=matches.map(a=>{const o=DB.osi.find(x=>x.id===a.osiId);
+    return '<div class="a-opt" onclick="authEnterLocal(\''+a.id+'\')"><b>кв. '+esc(a.apt)+' · '+esc(a.owner)+'</b><span>'+esc(o?o.name:'')+' · л/с '+esc(a.ls)+' (локально)</span></div>';}).join('');
+}
+function authEnterLocal(accId){
+  API_MODE=false;SESS={accountId:accId,mode:'local'};localStorage.setItem(SESSKEY,JSON.stringify(SESS));
+  buildStateFromLocal();showApp();
+}
+function authDemo(){
+  ensureDB();const acc=DB.accounts.find(a=>a.ls==='demo24')||DB.accounts[0];
+  if(acc)authEnterLocal(acc.id);else toast('Демо-данные недоступны');
+}
+async function enterApi(){
+  const data=await apiCall('/api/resident/me');
+  STATE={account:data.account,osi:data.osi,services:data.services,accruals:data.accruals,payments:data.payments,requests:data.requests};
+  showApp();
+}
+function showApp(){
+  document.getElementById('auth').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('h-name').textContent=STATE.account.owner+' · кв. '+STATE.account.apt;
+  document.getElementById('h-addr').textContent=STATE.osi?STATE.osi.name:'';
+  tab('home');
+}
+async function refreshState(){
+  if(API_MODE){const data=await apiCall('/api/resident/me');
+    STATE={account:data.account,osi:data.osi,services:data.services,accruals:data.accruals,payments:data.payments,requests:data.requests};
+  }else{buildStateFromLocal();}
+}
+function logout(){
+  if(API_MODE)apiCall('/api/resident/logout','POST').catch(()=>{});
+  localStorage.removeItem(SESSKEY);SESS=null;STATE=null;API_MODE=false;
+  document.getElementById('app').classList.add('hidden');document.getElementById('auth').classList.remove('hidden');
+  document.getElementById('au-results').innerHTML='';
+}
+
+function tab(t){
+  document.querySelectorAll('.bnav .it').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  const el=document.getElementById('scr');
+  el.innerHTML=({home:renderHome,bills:renderBills,req:renderReq,ai:renderAi,profile:renderProfile,notif:renderNotif})[t]();
+  el.scrollTop=0;
+}
+
+/* ---------- HOME ---------- */
+function renderHome(){
+  const bal=stBalance();const pers=stPeriods();const lastP=pers[0];
+  const idx=stAccIdx();const lastAccr=lastP?idx[lastP].a:0;
+  let h='';
+  h+='<div class="bal-card"><div class="l">'+(bal>0?'Задолженность':'Баланс лицевого счёта')+'</div>'+
+     '<div class="v">'+(bal>0?'-':'')+money(Math.abs(bal))+'</div>'+
+     '<div class="row"><button class="pay" onclick="openPay()">Оплатить</button><button class="req" onclick="tab(\'req\')">Подать заявку</button></div></div>';
+  h+='<div class="tiles">'+
+    '<div class="tile" onclick="tab(\'bills\')"><div class="ic">🧾</div><b>'+money(lastAccr)+'</b><span>начислено</span></div>'+
+    '<div class="tile" onclick="openMeters()"><div class="ic">📟</div><b>Счётчики</b><span>передать</span></div>'+
+    '<div class="tile" onclick="tab(\'ai\')"><div class="ic">✦</div><b>ИИ-чат</b><span>спросить</span></div>'+
+    '</div>';
+  if(bal>0)h+='<div class="ai-note"><div>✦</div><div><b>AI-подсказка</b><p>Долг '+money(bal)+'. '+(lastAccr?('Начисление за '+perName(lastP)+' — '+money(lastAccr)+'. '):'')+'Оплатите, чтобы не копилась пеня.</p></div></div>';
+  const recent=[...STATE.payments.map(x=>({date:x.date,type:'pay',x})),...STATE.requests.map(x=>({date:x.date,type:'req',x}))]
+    .sort((x,y)=>x.date<y.date?1:-1).slice(0,5);
+  h+='<div class="card"><h2 class="pt">Последние операции</h2>';
+  if(!recent.length)h+='<div class="empty small">Пока нет операций</div>';
+  else recent.forEach(r=>{
+    if(r.type==='pay')h+='<div class="row-item"><div class="ic">💳</div><div><b>Оплата принята</b><span>'+esc(r.date)+' · '+({kaspi:'Kaspi',card:'Карта',bank:'Банк',cash:'Наличные'}[r.x.method]||r.x.method)+'</span></div><div class="amt" style="color:#0f8f47">+'+money(r.x.amount)+'</div></div>';
+    else h+='<div class="row-item"><div class="ic">🛠</div><div><b>'+esc(r.x.topic)+'</b><span>'+esc(r.date)+'</span></div><div class="amt"><span class="pill '+({new:'warn',work:'info',done:'ok'}[r.x.status])+'">'+({new:'Новая',work:'В работе',done:'Выполнена'}[r.x.status])+'</span></div></div>';
+  });
+  h+='</div>';
+  return h;
+}
+
+/* ---------- ОПЛАТА (демо) ---------- */
+function openPay(){
+  const bal=stBalance();
+  document.getElementById('modal-root').innerHTML=
+   '<div class="mbg" onclick="if(event.target===this)closeModal()"><div class="msheet">'+
+   '<h3>Оплата · Kaspi Pay (демо)</h3>'+
+   '<label class="f"><span>Сумма к оплате</span><input class="f" id="pay-amt" type="number" value="'+Math.max(0,Math.round(bal))+'"></label>'+
+   '<button class="btn-main" onclick="doPay()">Оплатить</button>'+
+   '<button class="btn-gho" style="margin-top:8px" onclick="closeModal()">Отмена</button>'+
+   '<p class="small muted" style="margin-top:10px;text-align:center">Демо-платёж: сумма сразу спишет долг'+(API_MODE?' и появится в веб-кабинете УК.':' (локально, в этом браузере).')+'</p>'+
+   '</div></div>';
+}
+async function doPay(){
+  const amt=parseFloat(document.getElementById('pay-amt').value)||0;
+  if(amt<=0){toast('Укажите сумму');return;}
+  try{
+    if(API_MODE){await apiCall('/api/resident/pay','POST',{amount:amt});await refreshState();}
+    else{const pers=stPeriods();const per=pers[0]||today().slice(0,7);
+      DB.payments.push({id:uid('pay'),osiId:STATE.account.osiId,accountId:STATE.account.id,period:per,amount:amt,method:'kaspi',date:today()});
+      saveDB();buildStateFromLocal();}
+    closeModal();toast('Оплата на '+money(amt)+' проведена ✓');tab('home');
+  }catch(e){toast(e.message||'Не удалось провести оплату');}
+}
+function openMeters(){
+  document.getElementById('modal-root').innerHTML=
+   '<div class="mbg" onclick="if(event.target===this)closeModal()"><div class="msheet">'+
+   '<h3>Передать показания счётчиков</h3>'+
+   '<label class="f"><span>Холодная вода, м³</span><input class="f" placeholder="напр. 84.2"></label>'+
+   '<label class="f"><span>Горячая вода, м³</span><input class="f" placeholder="напр. 51.7"></label>'+
+   '<button class="btn-main" onclick="closeModal();toast(\'Показания отправлены УК ✓\')">Отправить</button>'+
+   '</div></div>';
+}
+function closeModal(){document.getElementById('modal-root').innerHTML='';}
+
+/* ---------- НАЧИСЛЕНИЯ ---------- */
+function renderBills(){
+  const pers=stPeriods();const idx=stAccIdx();
+  let h='<h2 class="pt">Начисления</h2><p class="ps">Разбивка по услугам за каждый период</p>';
+  if(!pers.length)return h+'<div class="empty">Пока нет начислений</div>';
+  pers.forEach(p=>{
+    const d=idx[p];
+    h+='<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center"><b>'+perName(p)+'</b>'+
+       '<span class="pill '+(d.pay>=d.a?'ok':(d.pay>0?'warn':'bad'))+'">'+(d.pay>=d.a?'Оплачено':(d.pay>0?'Частично':'Не оплачено'))+'</span></div><div class="hr"></div>';
+    for(const sid in d.s){const s=stService(sid);
+      h+='<div class="row-item"><div class="ic">🧾</div><div><b>'+esc(s?s.name:'Услуга')+'</b><span>начислено</span></div><div class="amt">'+money(d.s[sid])+'</div></div>';}
+    h+='<div class="hr"></div><div style="display:flex;justify-content:space-between;font-weight:800;font-size:13px"><span>Итого начислено / оплачено</span><span>'+money(d.a)+' / '+money(d.pay)+'</span></div></div>';
+  });
+  return h;
+}
+
+/* ---------- ЗАЯВКИ ---------- */
+function renderReq(){
+  const list=STATE.requests.slice().sort((x,y)=>x.date<y.date?1:-1);
+  let h='<h2 class="pt">Заявки в диспетчерскую</h2><p class="ps">Обращение видно диспетчеру УК сразу после отправки</p>';
+  h+='<button class="btn-main" style="margin-bottom:14px" onclick="openReqForm()">+ Новая заявка</button>';
+  if(!list.length)h+='<div class="empty">Заявок пока нет</div>';
+  else{h+='<div class="card">';list.forEach(r=>{
+    h+='<div class="row-item"><div class="ic">🛠</div><div><b>'+esc(r.topic)+'</b><span>'+esc(r.date)+(r.assignee&&r.assignee!=='—'?' · '+esc(r.assignee):'')+'</span></div>'+
+       '<div class="amt"><span class="pill '+({new:'warn',work:'info',done:'ok'}[r.status])+'">'+({new:'Новая',work:'В работе',done:'Выполнена'}[r.status])+'</span></div></div>';});
+    h+='</div>';}
+  return h;
+}
+function openReqForm(){
+  document.getElementById('modal-root').innerHTML=
+   '<div class="mbg" onclick="if(event.target===this)closeModal()"><div class="msheet">'+
+   '<h3>Новая заявка</h3>'+
+   '<label class="f"><span>Что случилось?</span><textarea class="f" id="rq-topic" rows="3" placeholder="Например: течёт кран на кухне"></textarea></label>'+
+   '<button class="btn-main" onclick="reqSave()">Отправить в УК</button>'+
+   '<button class="btn-gho" style="margin-top:8px" onclick="closeModal()">Отмена</button></div></div>';
+}
+async function reqSave(){
+  const topic=document.getElementById('rq-topic').value.trim();
+  if(!topic){toast('Опишите проблему');return;}
+  try{
+    if(API_MODE){await apiCall('/api/resident/request','POST',{topic});await refreshState();}
+    else{DB.requests.push({id:uid('req'),osiId:STATE.account.osiId,accountId:STATE.account.id,topic,assignee:'—',status:'new',date:today()});
+      saveDB();buildStateFromLocal();}
+    closeModal();toast('Заявка отправлена диспетчеру ✓');tab('req');
+  }catch(e){toast(e.message||'Не удалось отправить заявку');}
+}
+
+/* ---------- ИИ-ЧАТ (правило-based помощник по своим данным) ---------- */
+function renderAi(){
+  if(!CHAT.length){const bal=stBalance();
+    CHAT.push({who:'bot',text:'Здравствуйте, '+STATE.account.owner.split(' ')[0]+'! Я помогу разобраться с начислениями, долгом и заявками по вашей квартире. '+(bal>0?('Сейчас на вашем счету долг '+money(bal)+'.'):'Задолженности по счёту нет.')});
+  }
+  const sugg=['Какой у меня долг?','Когда платить взнос?','Как подать заявку?','За что начисления?'];
+  return '<div class="chat-wrap"><div class="chat-log" id="chat-log">'+CHAT.map(m=>'<div class="msg '+(m.who==='me'?'me':'bot')+'">'+esc(m.text)+'</div>').join('')+'</div>'+
+   '<div class="chat-sugg">'+sugg.map(s=>'<div class="chip-sugg" onclick="chatSend(\''+s.replace(/'/g,"\\'")+'\')">'+s+'</div>').join('')+'</div>'+
+   '<div class="chat-in"><input id="chat-input" placeholder="Напишите вопрос..." onkeydown="if(event.key===\'Enter\')chatSend()">'+
+   '<button onclick="chatSend()">➤</button></div></div>';
+}
+function chatSend(preset){
+  const input=document.getElementById('chat-input');
+  const text=preset||input.value.trim();if(!text)return;
+  CHAT.push({who:'me',text});
+  CHAT.push({who:'bot',text:chatReply(text)});
+  if(input)input.value='';
+  const el=document.getElementById('scr');el.innerHTML=renderAi();
+  const log=document.getElementById('chat-log');if(log)log.scrollTop=log.scrollHeight;
+}
+function chatReply(q){
+  const t=q.toLowerCase();const bal=stBalance();const pers=stPeriods();
+  if(/долг|задолж|баланс|сколько.*плат/.test(t)){
+    return bal>0?('Текущий долг по лицевому счёту — '+money(bal)+'. Можно оплатить через Kaspi прямо на главном экране.'):'Задолженности нет — счёт оплачен полностью.';
+  }
+  if(/когда|срок|до какого/.test(t)){
+    return 'Оплата принимается до 25 числа месяца, следующего за расчётным. После этой даты может начисляться пеня (если она включена УК).';
+  }
+  if(/заявк|сломал|теч|авар|ремонт/.test(t)){
+    return 'Чтобы подать заявку, перейдите во вкладку «Заявки» и нажмите «+ Новая заявка» — диспетчер УК увидит её сразу.';
+  }
+  if(/начислен|за что|услуг|тариф/.test(t)){
+    const last=pers[0];const idx=stAccIdx();const d=last?idx[last]:null;
+    if(!d)return 'Начислений пока нет.';
+    const parts=Object.keys(d.s).map(sid=>{const s=stService(sid);return (s?s.name:'услуга')+' — '+money(d.s[sid]);});
+    return 'За '+perName(last)+' начислено: '+parts.join('; ')+'.';
+  }
+  if(/счётчик|счетчик/.test(t))return 'Показания счётчиков можно передать с главного экрана — плитка «Счётчики».';
+  return 'Я могу ответить на вопросы про долг, начисления, сроки оплаты и заявки. Уточните вопрос, пожалуйста.';
+}
+
+/* ---------- ПРОФИЛЬ ---------- */
+function renderProfile(){
+  const a=STATE.account;const o=STATE.osi;
+  return '<h2 class="pt">Профиль</h2><p class="ps">Данные лицевого счёта</p>'+
+   '<div class="card"><div class="row-item"><div class="ic">👤</div><div><b>'+esc(a.owner)+'</b><span>Собственник</span></div></div>'+
+   '<div class="row-item"><div class="ic">🏠</div><div><b>кв. '+esc(a.apt)+' · '+a.area+' м²</b><span>'+esc(o?o.name:'')+'</span></div></div>'+
+   '<div class="row-item"><div class="ic">📱</div><div><b>'+esc(a.phone||'—')+'</b><span>Телефон</span></div></div>'+
+   '<div class="row-item"><div class="ic">🔢</div><div><b>'+esc(a.ls)+'</b><span>Лицевой счёт</span></div></div>'+
+   '</div><button class="btn-gho" style="margin-top:14px" onclick="logout()">Выйти из аккаунта</button>'+
+   '<p class="small muted" style="margin-top:14px;text-align:center">Turgyn App v1.1 · '+(API_MODE?'подключено к серверу УК':'локальный демо-режим (без сервера, данные только в этом браузере)')+'</p>';
+}
+function renderNotif(){
+  const bal=stBalance();const items=[];
+  if(bal>0)items.push({t:'Задолженность '+money(bal),s:'Оплатите, чтобы не копилась пеня',ic:'⚠️'});
+  STATE.requests.filter(r=>r.status==='work').forEach(r=>items.push({t:'Заявка «'+r.topic+'» в работе',s:'Исполнитель: '+(r.assignee||'—'),ic:'🛠'}));
+  items.push({t:'Начисление за '+perName(stPeriods()[0]||'')+' сформировано',s:'Смотрите в разделе «Начисления»',ic:'🧾'});
+  let h='<h2 class="pt">Уведомления</h2><p class="ps"></p><div class="card">';
+  items.forEach(i=>{h+='<div class="row-item"><div class="ic">'+i.ic+'</div><div><b>'+esc(i.t)+'</b><span>'+esc(i.s)+'</span></div></div>';});
+  h+='</div>';
+  return h;
+}
+
+/* ---------- init ---------- */
+(async function init(){
+  try{SESS=JSON.parse(localStorage.getItem(SESSKEY));}catch(e){SESS=null;}
+  if(SESS&&SESS.token){
+    API_MODE=true;
+    try{await enterApi();}catch(e){localStorage.removeItem(SESSKEY);SESS=null;API_MODE=false;}
+  }else if(SESS&&SESS.accountId){
+    API_MODE=false;ensureDB();
+    if(DB.accounts.find(a=>a.id===SESS.accountId)){buildStateFromLocal();showApp();}
+  }
+})();
+
+</script>
+</body>
+</html>
