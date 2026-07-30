@@ -48,6 +48,17 @@ input,select,textarea{font-family:inherit}
 .a-opt b{color:#fff;font-size:13.5px;display:block}.a-opt span{color:#9fd8c8;font-size:11.5px}
 .a-demo{margin-top:10px;background:transparent;border:1px dashed rgba(255,255,255,.3);color:#9fd8c8;border-radius:10px;
   padding:10px;width:100%;font-size:12.5px}
+.a-code{text-align:center;font-size:26px!important;letter-spacing:10px;font-weight:800;padding:14px 13px!important}
+.a-ph{color:#7fa89b;font-weight:600}
+.a-back{color:#9fd8c8;font-size:12.5px;cursor:pointer;margin-bottom:10px;display:inline-block}
+.a-back:hover{color:var(--mint)}
+.a-resend{margin-top:14px;text-align:center;font-size:12.5px;color:#7fa89b;min-height:18px}
+.a-resend b{color:var(--mint);cursor:pointer;font-weight:700}
+.a-err{margin-top:12px;background:rgba(224,72,75,.14);border:1px solid rgba(224,72,75,.45);color:#ffb9ba;
+  border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.5}
+.a-dev{margin-top:12px;background:rgba(63,230,192,.1);border:1px dashed rgba(63,230,192,.5);color:#8ef0d6;
+  border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.5;text-align:center}
+.a-btn[disabled]{opacity:.55}
 
 /* ---- header ---- */
 .hdr{padding:16px 18px 14px;display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#12352c,#0c2a24);color:#eafaf5}
@@ -142,12 +153,27 @@ label.f span{display:block;font-size:12px;color:var(--mut);margin-bottom:5px;fon
   <div id="auth">
     <div class="a-logo"><span class="m"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3fe6c0" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5 12 4.5l7.5 6"/><path d="M8.2 11.5v3.6a3.8 3.8 0 0 0 7.6 0v-3.6"/></svg></span><span><b>tur</b><span>gyn</span> app</span></div>
     <p class="sub">Приложение жителя · баланс, оплата, заявки, ИИ-помощник</p>
-    <label>Номер телефона или лицевой счёт</label>
-    <input id="au-key" placeholder="+7 777 ... или № л/с" autocomplete="off">
-    <button class="a-btn" onclick="authFind()">Войти</button>
+    <!-- шаг 1: телефон -->
+    <div id="au-step-phone">
+      <label>Номер телефона</label>
+      <input id="au-key" type="tel" inputmode="tel" placeholder="+7 777 000 00 00" autocomplete="tel">
+      <button class="a-btn" id="au-send-btn" onclick="authRequestCode()">Получить код</button>
+      <div class="a-hint">Код придёт SMS на номер, привязанный к вашему лицевому счёту.<br>Если номер не подходит — обратитесь в УК.</div>
+    </div>
+
+    <!-- шаг 2: код из SMS -->
+    <div id="au-step-code" class="hidden">
+      <div class="a-back" onclick="authBackToPhone()">‹ Изменить номер</div>
+      <label>Код из SMS <span id="au-phone-lbl" class="a-ph"></span></label>
+      <input id="au-code" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code"
+             class="a-code" placeholder="——————" oninput="authCodeInput()">
+      <button class="a-btn" id="au-verify-btn" onclick="authVerifyCode()">Войти</button>
+      <div class="a-resend" id="au-resend"></div>
+    </div>
+
     <div id="au-results" class="a-list"></div>
-    <button class="a-demo" onclick="authDemo()">Войти в демо-режиме (кв. 24, ЖК «Алатау»)</button>
-    <div class="a-hint">Приложение использует ту же базу данных, что и веб-кабинет УК Turgyn, открытый в этом браузере.<br>Заявка, поданная здесь, сразу видна диспетчеру.</div>
+    <div id="au-err" class="a-err hidden"></div>
+    <button class="a-demo" onclick="authDemo()">Войти в демо-режиме (без сервера)</button>
   </div>
 
   <!-- APP -->
@@ -193,7 +219,8 @@ async function apiCall(path,method,body){
   if(SESS&&SESS.token)headers['Authorization']='Bearer '+SESS.token;
   const r=await fetch(path,{method:method||'GET',headers,body:body?JSON.stringify(body):undefined});
   let data={};try{data=await r.json();}catch(e){}
-  if(!r.ok){const err=new Error(data.error||'Ошибка сервера');err.api=true;err.status=r.status;throw err;}
+  if(!r.ok){const err=new Error(data.error||'Ошибка сервера');err.api=true;err.status=r.status;
+    if(data.retryAfter)err.retryAfter=data.retryAfter;throw err;}
   return data;
 }
 
@@ -248,29 +275,114 @@ function stPeriods(){return Object.keys(stAccIdx()).sort().reverse();}
 function stService(id){return STATE.services.find(s=>s.id===id);}
 
 /* ================= AUTH ================= */
-async function authFind(){
-  const q=document.getElementById('au-key').value.trim();
-  if(!q){toast('Введите телефон или лицевой счёт');return;}
-  try{
-    const data=await apiCall('/api/resident/login','POST',{query:q});
-    if(data.matches&&data.matches.length){renderMatches(data.matches);return;}
-    if(data.token){SESS={token:data.token};localStorage.setItem(SESSKEY,JSON.stringify(SESS));API_MODE=true;await enterApi();}
-  }catch(err){
-    if(err.api){ // бэкенд отвечает, но не нашёл / отклонил
-      document.getElementById('au-results').innerHTML='<div class="a-opt" style="cursor:default"><b>Не найдено</b><span>'+esc(err.message)+'</span></div>';
-    }else{ // бэкенд недоступен (сеть/CORS) — работаем в локальном демо-режиме этого браузера
-      authFindLocal(q);
+let AUTH_PHONE='';        // номер, на который запрошен код
+let RESEND_TIMER=null;    // таймер обратного отсчёта для повторной отправки
+
+function authErr(msg){
+  const b=document.getElementById('au-err');
+  if(!msg){b.classList.add('hidden');b.textContent='';return;}
+  b.classList.remove('hidden');b.textContent=msg;
+}
+function authBackToPhone(){
+  clearInterval(RESEND_TIMER);
+  document.getElementById('au-step-code').classList.add('hidden');
+  document.getElementById('au-step-phone').classList.remove('hidden');
+  document.getElementById('au-results').innerHTML='';
+  document.getElementById('au-code').value='';
+  authErr('');
+}
+function authStartResendTimer(sec){
+  const box=document.getElementById('au-resend');
+  clearInterval(RESEND_TIMER);
+  let left=sec;
+  const tick=()=>{
+    if(left<=0){
+      clearInterval(RESEND_TIMER);
+      box.innerHTML='<b onclick="authRequestCode(true)">Отправить код повторно</b>';
+      return;
     }
-  }
+    box.textContent='Отправить код повторно можно через '+left+' сек.';
+    left--;
+  };
+  tick();
+  RESEND_TIMER=setInterval(tick,1000);
 }
+
+/* шаг 1 — запросить код */
+async function authRequestCode(isResend){
+  const phone=document.getElementById('au-key').value.trim();
+  if(!phone){toast('Введите номер телефона');return;}
+  const btn=document.getElementById(isResend?'au-verify-btn':'au-send-btn');
+  if(btn){btn.disabled=true;}
+  authErr('');
+  try{
+    const data=await apiCall('/api/resident/request-code','POST',{phone});
+    AUTH_PHONE=phone;
+    document.getElementById('au-step-phone').classList.add('hidden');
+    document.getElementById('au-step-code').classList.remove('hidden');
+    document.getElementById('au-phone-lbl').textContent='на '+phone;
+    const inp=document.getElementById('au-code');inp.value='';inp.focus();
+    authStartResendTimer(60);
+    // Если SMS-шлюз ещё не подключён, сервер возвращает код — показываем его для теста.
+    if(data.devCode){
+      document.getElementById('au-results').innerHTML=
+        '<div class="a-dev">SMS-шлюз не подключён.<br>Код для входа: <b style="font-size:16px;letter-spacing:2px">'+esc(data.devCode)+'</b></div>';
+    }else{
+      document.getElementById('au-results').innerHTML='';
+    }
+  }catch(err){
+    if(err.api){
+      authErr(err.message);
+      // если сервер сказал «подождите N сек» — оставляем экран кода и заводим таймер
+      if(err.retryAfter){
+        document.getElementById('au-step-phone').classList.add('hidden');
+        document.getElementById('au-step-code').classList.remove('hidden');
+        authStartResendTimer(err.retryAfter);
+      }
+    }else{
+      // бэкенд недоступен — предлагаем локальный демо-режим, как раньше
+      authErr('Сервер недоступен. Можно войти в демо-режиме — данные только в этом браузере.');
+      authFindLocal(phone);
+    }
+  }finally{ if(btn){btn.disabled=false;} }
+}
+
+function authCodeInput(){
+  const inp=document.getElementById('au-code');
+  inp.value=inp.value.replace(/\D/g,'').slice(0,6);
+  authErr('');
+  if(inp.value.length===6)authVerifyCode(); // 6 цифр введено — входим автоматически
+}
+
+/* шаг 2 — проверить код */
+async function authVerifyCode(accountId){
+  const code=document.getElementById('au-code').value.replace(/\D/g,'');
+  if(code.length<6){toast('Введите 6 цифр из SMS');return;}
+  const btn=document.getElementById('au-verify-btn');
+  if(btn)btn.disabled=true;
+  authErr('');
+  try{
+    const body={phone:AUTH_PHONE,code};
+    if(accountId)body.accountId=accountId;
+    const data=await apiCall('/api/resident/verify-code','POST',body);
+    if(data.matches&&data.matches.length){renderMatches(data.matches);return;}
+    if(data.token){
+      clearInterval(RESEND_TIMER);
+      SESS={token:data.token};localStorage.setItem(SESSKEY,JSON.stringify(SESS));
+      API_MODE=true;await enterApi();
+    }
+  }catch(err){
+    authErr(err.api?err.message:'Сервер недоступен. Попробуйте позже.');
+    const inp=document.getElementById('au-code');if(inp){inp.value='';inp.focus();}
+  }finally{ if(btn)btn.disabled=false; }
+}
+
+/* на один номер может быть несколько квартир — даём выбрать */
 function renderMatches(matches){
-  document.getElementById('au-results').innerHTML=matches.map(m=>
-    '<div class="a-opt" onclick="authPick(\''+m.id+'\')"><b>кв. '+esc(m.apt)+' · '+esc(m.owner)+'</b><span>'+esc(m.osiName)+'</span></div>').join('');
-}
-async function authPick(accountId){
-  try{const data=await apiCall('/api/resident/login','POST',{accountId});
-    SESS={token:data.token};localStorage.setItem(SESSKEY,JSON.stringify(SESS));API_MODE=true;await enterApi();
-  }catch(e){toast('Не удалось войти');}
+  document.getElementById('au-results').innerHTML=
+    '<div style="color:#9fd8c8;font-size:12.5px;margin-bottom:2px">Выберите лицевой счёт:</div>'+
+    matches.map(m=>
+    '<div class="a-opt" onclick="authVerifyCode(\''+m.id+'\')"><b>кв. '+esc(m.apt)+' · '+esc(m.owner)+'</b><span>'+esc(m.osiName)+' · л/с '+esc(m.ls||'')+'</span></div>').join('');
 }
 function authFindLocal(q){
   ensureDB();
