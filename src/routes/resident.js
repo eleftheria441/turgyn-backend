@@ -2,10 +2,76 @@ const express = require('express');
 const crypto = require('crypto');
 const store = require('../store');
 const auth = require('../auth');
-const sms = require('../sms');
 const { uid } = require('../seedData');
 
 const router = express.Router();
+
+/* Отправка SMS с подключаемым провайдером.
+
+   Пока SMS_PROVIDER не задан (или = 'console'), коды никуда не уходят —
+   они пишутся в лог сервера и возвращаются в ответе API. Это режим для
+   разработки и демо: можно тестировать вход, не подключая платный шлюз.
+
+   Когда будет договор с оператором, достаточно задать переменные окружения
+   (SMS_PROVIDER=mobizon, SMS_API_KEY=...) — код приложения менять не нужно.
+*/
+
+const SMS_PROVIDER = (process.env.SMS_PROVIDER || 'console').toLowerCase();
+const SMS_API_KEY = process.env.SMS_API_KEY || '';
+const SMS_SENDER = process.env.SMS_SENDER || 'Turgyn';
+
+
+function messageText(code) {
+  return 'Turgyn: код для входа ' + code + '. Никому его не сообщайте.';
+}
+
+async function sendViaMobizon(phone, code) {
+  // Mobizon (mobizon.kz) — популярный шлюз в Казахстане.
+  const url = 'https://api.mobizon.kz/service/message/sendSmsMessage' +
+    '?apiKey=' + encodeURIComponent(SMS_API_KEY) +
+    '&recipient=' + encodeURIComponent(phone) +
+    '&text=' + encodeURIComponent(messageText(code)) +
+    '&from=' + encodeURIComponent(SMS_SENDER);
+  const r = await fetch(url, { method: 'POST' });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data.code !== 0) {
+    throw new Error('Шлюз SMS вернул ошибку: ' + (data.message || r.status));
+  }
+  return true;
+}
+
+async function sendViaSmsc(phone, code) {
+  // SMSC.kz — альтернативный шлюз. SMS_API_KEY здесь в формате "логин:пароль".
+  const [login, password] = String(SMS_API_KEY).split(':');
+  const url = 'https://smsc.kz/sys/send.php?fmt=3' +
+    '&login=' + encodeURIComponent(login || '') +
+    '&psw=' + encodeURIComponent(password || '') +
+    '&phones=' + encodeURIComponent(phone) +
+    '&mes=' + encodeURIComponent(messageText(code)) +
+    '&sender=' + encodeURIComponent(SMS_SENDER);
+  const r = await fetch(url);
+  const data = await r.json().catch(() => ({}));
+  if (data.error) throw new Error('Шлюз SMS вернул ошибку: ' + data.error);
+  return true;
+}
+
+/* Отправить код. Возвращает { sent, exposeCode }.
+   Если шлюз не настроен — не считаем это ошибкой входа: код виден в логах. */
+async function smsSendCode(phone, code) {
+  if (SMS_PROVIDER === 'console') {
+    console.log('[SMS/dev] ' + phone + ' → код ' + code + ' (шлюз не подключён, см. SMS_PROVIDER)');
+    return { sent: false, exposeCode: true };
+  }
+  if (!SMS_API_KEY) throw new Error('SMS_PROVIDER задан, но SMS_API_KEY пуст');
+
+  if (SMS_PROVIDER === 'mobizon') await sendViaMobizon(phone, code);
+  else if (SMS_PROVIDER === 'smsc') await sendViaSmsc(phone, code);
+  else throw new Error('Неизвестный SMS_PROVIDER: ' + SMS_PROVIDER);
+
+  return { sent: true, exposeCode: false };
+}
+
+
 
 const CODE_TTL_MS = 5 * 60 * 1000;       // код живёт 5 минут
 const RESEND_COOLDOWN_MS = 60 * 1000;    // повторная отправка не чаще раза в минуту
@@ -84,7 +150,7 @@ router.post('/request-code', async (req, res) => {
 
   let delivery;
   try {
-    delivery = await sms.sendCode(phone, code);
+    delivery = await smsSendCode(phone, code);
   } catch (e) {
     console.error('Ошибка отправки SMS:', e.message);
     return res.status(502).json({ error: 'Не удалось отправить SMS. Попробуйте позже или обратитесь в УК.' });
