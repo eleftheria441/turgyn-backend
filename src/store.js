@@ -6,6 +6,7 @@ const path = require('path');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const SESS_FILE = path.join(DATA_DIR, 'sessions.json');
+const CODES_FILE = path.join(DATA_DIR, 'loginCodes.json');
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -50,4 +51,12 @@ function saveSessions(s) {
   return queueWrite(SESS_FILE, s);
 }
 
-module.exports = { getDB, saveDB, dbExists, getSessions, saveSessions, DATA_DIR, DB_FILE };
+/* Одноразовые коды входа жителей: { "<телефон>": {hash, expires, attempts, sentAt, accountIds} } */
+function getCodes() {
+  return readJson(CODES_FILE, {});
+}
+function saveCodes(c) {
+  return queueWrite(CODES_FILE, c);
+}
+
+module.exports = { getDB, saveDB, dbExists, getSessions, saveSessions, getCodes, saveCodes, DATA_DIR, DB_FILE };
