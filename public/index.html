@@ -313,6 +313,31 @@ tfoot td{padding:11px 12px;border-top:2px solid var(--line2);font-weight:800;bac
 .tstm .who b{display:block;font-size:13.5px}.tstm .who span{color:var(--mut);font-size:12px}
 .logos-cap{text-align:center;color:var(--mut2);font-size:12.5px;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin:6px 0 18px}
 .logos-row{display:flex;flex-wrap:wrap;gap:14px;justify-content:center}
+
+/* ---- секция набора пилотных ОСИ (вместо отзывов) ---- */
+.pilot-badge{display:inline-flex;align-items:center;gap:7px;background:#e3f6f3;color:var(--brand-d);
+  font-size:11.5px;font-weight:800;padding:5px 13px;border-radius:20px;margin-bottom:14px;
+  text-transform:uppercase;letter-spacing:.6px}
+.pilot-badge::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--brand);
+  box-shadow:0 0 0 0 rgba(24,195,154,.6);animation:pulseDot 2s infinite}
+@keyframes pulseDot{0%{box-shadow:0 0 0 0 rgba(24,195,154,.55)}70%{box-shadow:0 0 0 8px rgba(24,195,154,0)}100%{box-shadow:0 0 0 0 rgba(24,195,154,0)}}
+.pilot-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+@media(max-width:900px){.pilot-grid{grid-template-columns:1fr}}
+.pilot-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px;position:relative;
+  transition:transform .22s,box-shadow .22s,border-color .22s}
+.pilot-card:hover{transform:translateY(-4px);border-color:var(--brand);box-shadow:var(--sh)}
+.pilot-card .pn{font-size:12px;font-weight:800;color:var(--brand-d);letter-spacing:1.5px;margin-bottom:10px}
+.pilot-card h3{font-size:16.5px;margin-bottom:14px}
+.pilot-card ul{list-style:none;display:flex;flex-direction:column;gap:10px}
+.pilot-card li{position:relative;padding-left:22px;font-size:13.5px;line-height:1.55;color:var(--mut)}
+.pilot-card li::before{content:'';position:absolute;left:0;top:6px;width:11px;height:6px;
+  border-left:2px solid var(--brand);border-bottom:2px solid var(--brand);transform:rotate(-45deg)}
+.pilot-cta{margin-top:30px;background:linear-gradient(135deg,#12352c,#0c2a24);border-radius:18px;
+  padding:26px 30px;display:flex;align-items:center;gap:24px;flex-wrap:wrap;color:#eafaf5}
+.pilot-cta b{display:block;font-size:18px;margin-bottom:6px}
+.pilot-cta span{font-size:13.5px;color:#9fd8c8;line-height:1.55;max-width:620px;display:block}
+.pilot-cta .btn{margin-left:auto;flex:none}
+@media(max-width:900px){.pilot-cta{padding:22px}.pilot-cta .btn{margin-left:0;width:100%;justify-content:center}}
 .logo-chip{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--line);border-radius:12px;
   padding:12px 18px;color:var(--mut);font-weight:700;font-size:14px}
 .logo-chip .m{width:24px;height:24px;border-radius:7px;background:linear-gradient(135deg,var(--brand),var(--brand-d));
@@ -436,7 +461,7 @@ tfoot td{padding:11px 12px;border-top:2px solid var(--line2);font-weight:800;bac
       <a onclick="lpScroll('lp-app')">Приложение</a>
       <a onclick="lpScroll('lp-how')">Как это работает</a>
       <a onclick="lpScroll('lp-pc')">Плюсы и минусы</a>
-      <a onclick="lpScroll('lp-reviews')">Отзывы</a>
+      <a onclick="lpScroll('lp-reviews')">Пилот</a>
       <a onclick="lpScroll('lp-price')">Тарифы</a>
     </div>
     <div class="spacer"></div>
@@ -526,7 +551,7 @@ tfoot td{padding:11px 12px;border-top:2px solid var(--line2);font-weight:800;bac
           <div class="phone-glow"></div>
           <div class="phone"><div class="notch"></div><div class="scr">
             <div class="p-status"><span>9:41</span><span>Turgyn App</span></div>
-            <div class="p-top"><b>Кв. 24 · ЖК «Алатау»</b></div>
+            <div class="p-top"><b>Кв. 24 · демо-дом</b></div>
             <div class="p-bal"><div class="l">Текущий баланс</div><div class="v">-18 400 ₸</div>
               <div class="btnrow"><span>Оплатить</span><span class="gho">Kaspi</span></div></div>
             <div class="p-cards">
@@ -591,19 +616,46 @@ tfoot td{padding:11px 12px;border-top:2px solid var(--line2);font-weight:800;bac
 
   <div class="lp-sec" id="lp-reviews">
     <div class="lp-wrap">
-      <div class="sh reveal"><h2>Нам доверяют управление домами</h2><p>Что говорят председатели ОСИ и руководители управляющих компаний.</p></div>
-      <div class="tstm-grid reveal-stagger">
-        <div class="tstm r-item"><div class="stars">★★★★★</div><div class="q">«Раньше сводили начисления в Excel и вечно искали ошибки. Теперь весь дом начисляется за минуту, а собираемость выросла — жители видят свои долги в кабинете.»</div><div class="who"><div class="av">А</div><div><b>Алия Нурланова</b><span>Председатель ОСИ, ЖК «Алатау»</span></div></div></div>
-        <div class="tstm r-item"><div class="stars">★★★★★</div><div class="q">«Ведём 18 ОСИ в одном кабинете. Бухгалтерия как в 1С, но без дорогого сопровождения. Оборотку и акты сверки готовим в пару кликов.»</div><div class="who"><div class="av">М</div><div><b>Марат Сулейменов</b><span>Директор УК «Комфорт Сервис»</span></div></div></div>
-        <div class="tstm r-item"><div class="stars">★★★★★</div><div class="q">«Юридический блок сэкономил недели: расчёт долга и исковое формируются сами из карточки должника. Дошли до суда без юриста в штате.»</div><div class="who"><div class="av">Д</div><div><b>Данияр Ахметов</b><span>Управляющий, ЖК «Есиль Тауэр»</span></div></div></div>
+      <div class="sh reveal"><span class="pilot-badge">Набор открыт</span><h2>Ищем первые ОСИ для бесплатного пилота</h2><p>Turgyn — новый продукт. Мы берём несколько ОСИ и управляющих компаний в Астане и Алматы, чтобы внедрить платформу бесплатно и довести её до боевого состояния на реальных данных.</p></div>
+
+      <div class="pilot-grid reveal-stagger">
+        <div class="pilot-card r-item">
+          <div class="pn">01</div>
+          <h3>Что получаете вы</h3>
+          <ul>
+            <li>Полный доступ ко всем модулям — бесплатно на время пилота</li>
+            <li>Перенос ваших лицевых счетов, площадей и тарифов силами нашей команды</li>
+            <li>Обучение бухгалтера и диспетчера, поддержка в рабочее время</li>
+            <li>Приоритет в доработках: то, что нужно вам, попадает в продукт первым</li>
+          </ul>
+        </div>
+        <div class="pilot-card r-item">
+          <div class="pn">02</div>
+          <h3>Что нужно от вас</h3>
+          <ul>
+            <li>Реальный дом: от 50 лицевых счетов</li>
+            <li>Готовность вести начисления в Turgyn параллельно с текущей системой 1–2 месяца</li>
+            <li>Обратная связь — что мешает, чего не хватает, где неудобно</li>
+            <li>Разрешение упомянуть вас как пилотное ОСИ, если результат вас устроит</li>
+          </ul>
+        </div>
+        <div class="pilot-card r-item">
+          <div class="pn">03</div>
+          <h3>Честно о стадии</h3>
+          <ul>
+            <li>Работают: биллинг, бухгалтерия, юридический блок, заявки, приложение жителя</li>
+            <li>В работе: приём платежей через Kaspi и Halyk, передача показаний счётчиков</li>
+            <li>Клиентов на платформе пока нет — вы будете первыми, и мы этого не скрываем</li>
+          </ul>
+        </div>
       </div>
-      <div class="logos-cap" style="margin-top:36px">Уже работают на платформе</div>
-      <div class="logos-row">
-        <div class="logo-chip"><span class="m"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V9l6-4 6 4"/><path d="M15 21V11l6-3v13"/><path d="M3 21h18"/></svg></span>ЖК «Алатау»</div>
-        <div class="logo-chip"><span class="m"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V9l6-4 6 4"/><path d="M15 21V11l6-3v13"/><path d="M3 21h18"/></svg></span>ЖК «Есиль Тауэр»</div>
-        <div class="logo-chip"><span class="m"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V9l6-4 6 4"/><path d="M15 21V11l6-3v13"/><path d="M3 21h18"/></svg></span>УК «Комфорт Сервис»</div>
-        <div class="logo-chip"><span class="m"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V9l6-4 6 4"/><path d="M15 21V11l6-3v13"/><path d="M3 21h18"/></svg></span>ЖК «Астана Парк»</div>
-        <div class="logo-chip"><span class="m"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V9l6-4 6 4"/><path d="M15 21V11l6-3v13"/><path d="M3 21h18"/></svg></span>ОСИ «Байтерек»</div>
+
+      <div class="pilot-cta reveal">
+        <div>
+          <b>Готовы попробовать на своём доме?</b>
+          <span>Оставьте заявку — свяжемся в течение дня, посмотрим ваши данные и скажем честно, подходит вам Turgyn сейчас или лучше подождать.</span>
+        </div>
+        <button class="btn lg" onclick="lpScroll('lp-price')">Оставить заявку на пилот</button>
       </div>
     </div>
   </div>
@@ -634,17 +686,17 @@ tfoot td{padding:11px 12px;border-top:2px solid var(--line2);font-weight:800;bac
       </div>
 
       <div class="pay-card" id="pay-card">
-        <h3>Оформление подписки</h3>
-        <p class="muted small">Демо-форма оплаты. Приём платежей: Kaspi Pay · Halyk · CloudPayments · Robokassa.</p>
+        <h3>Заявка на подключение</h3>
+        <p class="muted small">Оставьте контакты — свяжемся в течение рабочего дня, покажем систему на ваших данных и подберём тариф.</p>
         <div class="pay-row">
-          <label class="fld full"><span>Тариф</span><select id="pay-plan"><option>УК — 35 ₸ / счёт</option><option>ОСИ — 45 ₸ / счёт</option><option>Enterprise — индивидуально</option></select></label>
-          <label class="fld full"><span>Организация (ИИН/БИН)</span><input id="pay-org" placeholder="ТОО / БИН"></label>
-          <label class="fld full"><span>Номер карты</span><input id="pay-num" placeholder="0000 0000 0000 0000"></label>
-          <label class="fld"><span>Срок</span><input id="pay-exp" placeholder="ММ/ГГ"></label>
-          <label class="fld"><span>CVC</span><input id="pay-cvc" placeholder="•••"></label>
+          <label class="fld full"><span>Тариф</span><select id="pay-plan"><option>УК — 35 ₸ / счёт</option><option>ОСИ — 45 ₸ / счёт</option><option>Enterprise — индивидуально</option><option>Бесплатный пилот</option></select></label>
+          <label class="fld full"><span>Организация (ОСИ / УК)</span><input id="pay-org" placeholder="Например: ОСИ «Береке» или ТОО «УК Астана»"></label>
+          <label class="fld"><span>Контактное лицо</span><input id="pay-name" placeholder="Имя и должность"></label>
+          <label class="fld"><span>Телефон</span><input id="pay-phone" type="tel" placeholder="+7 700 000 00 00"></label>
+          <label class="fld full"><span>Сколько лицевых счетов</span><input id="pay-cnt" type="number" min="1" placeholder="Примерное количество квартир"></label>
         </div>
-        <button class="btn lg" style="width:100%;margin-top:18px" onclick="lpPaySubmit()">Активировать пробный период</button>
-        <p class="muted small" style="text-align:center;margin-top:12px">Первые 14 дней бесплатно. Списание — только после окончания пробного периода.</p>
+        <button class="btn lg" style="width:100%;margin-top:18px" onclick="lpPaySubmit()">Отправить заявку</button>
+        <p class="muted small" style="text-align:center;margin-top:12px">Оплата подключается отдельно, после договора — на лендинге мы карт не принимаем.</p>
       </div>
     </div>
   </div>
@@ -1149,9 +1201,13 @@ function lpPay(plan){const sel=document.getElementById('pay-plan');
   lpScroll('pay-card');}
 function lpPaySubmit(){
   const org=document.getElementById('pay-org').value.trim();
-  if(!org){toast('Укажите организацию (БИН)','bad');return;}
-  toast('Пробный период на 14 дней активирован ✓','ok');
-  setTimeout(enterLogin,900);
+  const name=document.getElementById('pay-name').value.trim();
+  const phone=document.getElementById('pay-phone').value.trim();
+  if(!org){toast('Укажите организацию','bad');return;}
+  if(!name){toast('Укажите контактное лицо','bad');return;}
+  if(phone.replace(/\D/g,'').length<10){toast('Укажите телефон для связи','bad');return;}
+  toast('Заявка отправлена — свяжемся в течение рабочего дня ✓','ok');
+  ['pay-org','pay-name','pay-phone','pay-cnt'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
 }
 
 function boot(){
