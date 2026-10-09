@@ -81,4 +81,15 @@ function buildSeed() {
   return db;
 }
 
-module.exports = { buildSeed, uid };
+/* Пустая рабочая база: без демо-домов, с одним директором. */
+function buildEmpty(admin) {
+  return {
+    org: { name: process.env.ORG_NAME || 'Управляющая компания', bin: process.env.ORG_BIN || '', city: '', phone: '' },
+    subscription: { plan: 'uk', pricePerAccount: 35, since: new Date().toISOString().slice(0, 10), status: 'active' },
+    users: [{ id: 'u1', name: admin.name || 'Директор', login: admin.login, passHash: hashPassword(admin.password), role: 'director', pos: 'Директор УК', mustChangePassword: !!admin.mustChange }],
+    osi: [], houses: [], accounts: [], services: [], accruals: [], payments: [],
+    providers: [], provInvoices: [], provPayments: [], requests: [], importLog: [], penalty: { enabled: false, rate: 0.05 }
+  };
+}
+
+module.exports = { buildSeed, buildEmpty, uid };

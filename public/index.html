@@ -717,13 +717,10 @@ tfoot td{padding:11px 12px;border-top:2px solid var(--line2);font-weight:800;bac
       <button type="button" class="btn gho sm" onclick="setAdminLang('ru')">РУС</button>
     </div>
     <label>Логин</label>
-    <input id="lg-login" value="admin" autocomplete="off">
+    <input id="lg-login" autocomplete="username">
     <label>Пароль</label>
-    <input id="lg-pass" type="password" value="admin">
+    <input id="lg-pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
     <button class="btn" id="btn-login" onclick="doLogin()">Войти в систему</button>
-    <div class="login-hint">Демо-доступы:<br>
-      <b>admin / admin</b> — Директор · <b>buh / buh</b> — Бухгалтер · <b>disp / disp</b> — Диспетчер<br>
-      <span class="small">Если backend не запущен — вход всё равно работает в локальном демо-режиме этого браузера.</span></div>
   </div>
 </div>
 
@@ -747,6 +744,7 @@ tfoot td{padding:11px 12px;border-top:2px solid var(--line2);font-weight:800;bac
       <div class="userchip">
         <div class="who"><b id="u-name"></b><span id="u-role"></span></div>
         <div class="av" id="u-av">A</div>
+        <button class="btn gho sm" onclick="pwdForm(false)" title="Сменить пароль">Пароль</button>
         <button class="btn gho sm" id="btn-logout" onclick="logout()" title="Выход">Выход</button>
       </div>
     </div>
@@ -810,8 +808,8 @@ async function apiCall(path,method,body){
   return data;
 }
 function connBadge(){
-  return BACKEND_MODE?'<span class="pill ok" title="Данные синхронизируются с сервером">🟢 Сервер</span>':
-    '<span class="pill mut" title="Backend не подключён — данные только в этом браузере">🟡 Локальный режим</span>';
+  return BACKEND_MODE?'<span class="pill ok" title="Данные сохраняются на сервере">🟢 Сохранено</span>':
+    '<span class="pill bad" title="Нет связи с сервером">🔴 Нет связи</span>';
 }
 /* индекс агрегатов по (счёт→период→{a:начислено, pay:оплачено, s:{услуга:начислено}}) для скорости */
 function buildIdx(){const idx={};
@@ -830,15 +828,47 @@ function accOpen(a){return (a?(a.saldoStart||0):0)+accSvcOpen(a);}
 function svcBal(accId,svcId,per){const a=DB.accounts.find(x=>x.id===accId)||{};
   let b=(a.saldoBySvc&&a.saldoBySvc[svcId])||0;
   const m=accM(accId);for(const p in m){if(per&&!(p<per))continue;const d=m[p];const ac=d.s[svcId]||0;b+=ac-(d.a>0?d.pay*ac/d.a:0);}return b;}
+let SAVING=false,SAVE_AGAIN=false,PENDING=false;
 function save(){
   _IDX=null;
-  try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){}
-  if(BACKEND_MODE&&AUTH_TOKEN){
-    clearTimeout(saveTimer);saveTimer=setTimeout(()=>{
-      apiCall('/api/state','POST',DB).catch(()=>toast('Нет связи с сервером — последние изменения сохранены только локально','bad'));
-    },350);
+  if(!(BACKEND_MODE&&AUTH_TOKEN))return;
+  PENDING=true;setSaveState('saving');
+  clearTimeout(saveTimer);saveTimer=setTimeout(pushState,350);
+}
+async function pushState(){
+  if(SAVING){SAVE_AGAIN=true;return;}
+  SAVING=true;setSaveState('saving');
+  try{
+    const r=await apiCall('/api/state','POST',DB);
+    DB._v=r.version;
+    (DB.users||[]).forEach(u=>{delete u.pass;}); // пароль ушёл на сервер и захэширован — в памяти не держим
+    if(!SAVE_AGAIN)PENDING=false;
+    setSaveState(PENDING?'saving':'ok');
+  }catch(e){
+    PENDING=false;
+    if(e.status===409){
+      toast('Данные изменил другой сотрудник. Загружена актуальная версия — повторите последнее действие.','bad');
+      await reloadState();
+    }else if(e.status===401){
+      toast('Сессия истекла — войдите снова','bad');logout();
+    }else{
+      setSaveState('err');
+      toast('Не удалось сохранить: '+(e.api?e.message:'нет связи с сервером')+'. Изменения не сохранены — не закрывайте страницу.','bad');
+    }
+  }finally{
+    SAVING=false;
+    if(SAVE_AGAIN){SAVE_AGAIN=false;pushState();}
   }
 }
+async function reloadState(){
+  try{DB=await apiCall('/api/state');_IDX=null;if(S.osi&&!DB.osi.find(o=>o.id===S.osi))S.osi=DB.osi.length?DB.osi[0].id:null;boot();}
+  catch(e){toast('Не удалось загрузить данные с сервера','bad');}
+}
+function setSaveState(st){
+  const cb=document.getElementById('conn-badge');if(!cb)return;
+  cb.innerHTML=st==='saving'?'<span class="pill mut">Сохранение…</span>':st==='err'?'<span class="pill bad">⚠ Не сохранено</span>':connBadge();
+}
+window.addEventListener('beforeunload',e=>{if(PENDING||SAVING){e.preventDefault();e.returnValue='';}});
 function load(){const r=localStorage.getItem(KEY); if(r){try{DB=JSON.parse(r);}catch(e){DB=null;}} if(!DB)seed();}
 function initDB(after){
   // локальный кэш на случай отсутствия backend'а или офлайн-режима
@@ -847,7 +877,7 @@ function initDB(after){
   // если есть сохранённый токен сессии — пробуем восстановить реальную серверную сессию без повторного ввода пароля
   if(AUTH_TOKEN){
     apiCall('/api/state').then(d=>{
-      DB=d;BACKEND_MODE=true;try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){}
+      DB=d;BACKEND_MODE=true;
       try{S.user=JSON.parse(localStorage.getItem(UKEY));}catch(e){}
       if(after)after(true);
     }).catch(()=>{AUTH_TOKEN=null;localStorage.removeItem(TOKKEY);localStorage.removeItem(UKEY);if(after)after(false);});
@@ -1106,19 +1136,57 @@ async function doLogin(){
     if(r.ok){
       AUTH_TOKEN=data.token;localStorage.setItem(TOKKEY,AUTH_TOKEN);localStorage.setItem(UKEY,JSON.stringify(data.user));
       S.user=data.user;BACKEND_MODE=true;
-      DB=await apiCall('/api/state');try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){}
+      document.getElementById('lg-pass').value='';
+      DB=await apiCall('/api/state');
+      await offerMigration();
       if(!S.osi&&DB.osi.length)S.osi=DB.osi[0].id;
-      enterApp();return;
+      enterApp();
+      if(data.user.mustChangePassword)setTimeout(()=>pwdForm(true),300);
+      return;
     }
     toast(data.error||'Неверный логин или пароль','bad');
   }catch(netErr){
-    // backend недоступен (например, файл открыт локально без сервера) — локальный демо-режим этого браузера
-    BACKEND_MODE=false;
-    const u=DB.users.find(x=>x.login===l&&x.pass===p);
-    if(!u){toast('Неверный логин или пароль (backend недоступен — локальный демо-режим)','bad');return;}
-    S.user=u;if(!S.osi&&DB.osi.length)S.osi=DB.osi[0].id;
-    enterApp();
+    toast('Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.','bad');
   }
+}
+/* Однократный перенос данных, которые раньше хранились только в этом браузере */
+async function offerMigration(){
+  let local=null;try{const r=localStorage.getItem(KEY);if(r)local=JSON.parse(r);}catch(e){}
+  if(!local||!Array.isArray(local.osi)||!local.osi.length){return;}
+  if(S.user.role!=='director')return;
+  const serverEmpty=!DB.osi.length;
+  const msg='В этом браузере найдены данные, сохранённые до подключения сервера: '+local.osi.length+' ОСИ, '+((local.accounts||[]).length)+' лицевых счетов.\n\n'+
+    (serverEmpty?'Перенести их на сервер?':'ВНИМАНИЕ: на сервере уже есть данные ('+DB.osi.length+' ОСИ). Перенос ЗАМЕНИТ их данными из браузера.\n\nПеренести?')+
+    '\n\nОтмена — данные в браузере останутся, перенести можно при следующем входе.';
+  if(!confirm(msg))return;
+  const v=DB._v;const users=DB.users;
+  const next=Object.assign({},local,{users:users,_v:v}); // сотрудники и пароли — только серверные
+  try{
+    const r=await apiCall('/api/state','POST',next);
+    DB=await apiCall('/api/state');
+    localStorage.removeItem(KEY);
+    toast('Данные перенесены на сервер','ok');
+  }catch(e){toast('Перенос не удался: '+(e.message||'ошибка'),'bad');}
+}
+/* Смена пароля */
+function pwdForm(forced){
+  modal(forced?'Смените временный пароль':'Смена пароля',
+    (forced?'<p class="small muted">Пароль был выдан директором. Для безопасности задайте свой — не короче 10 символов.</p>':'')+
+    '<div class="form-grid"><label class="fld full"><span>Текущий пароль</span><input id="pw-old" type="password" autocomplete="current-password"></label>'+
+    '<label class="fld full"><span>Новый пароль (от 10 символов)</span><input id="pw-new" type="password" autocomplete="new-password"></label>'+
+    '<label class="fld full"><span>Повторите новый пароль</span><input id="pw-new2" type="password" autocomplete="new-password"></label></div>',
+    (forced?'':'<button class="btn gho" onclick="closeModal()">Отмена</button>')+'<button class="btn" onclick="pwdSave()">Сохранить</button>');
+}
+async function pwdSave(){
+  const o=document.getElementById('pw-old').value,n=document.getElementById('pw-new').value,n2=document.getElementById('pw-new2').value;
+  if(n!==n2){toast('Новые пароли не совпадают','bad');return;}
+  if(n.length<10){toast('Пароль — не короче 10 символов','bad');return;}
+  try{
+    const r=await apiCall('/api/auth/password','POST',{oldPassword:o,newPassword:n});
+    AUTH_TOKEN=r.token;localStorage.setItem(TOKKEY,AUTH_TOKEN);
+    if(S.user)S.user.mustChangePassword=false;
+    closeModal();toast('Пароль изменён. Остальные устройства разлогинены.','ok');
+  }catch(e){toast(e.message||'Ошибка','bad');}
 }
 function enterApp(){
   document.getElementById('login').classList.add('hidden');
@@ -1128,7 +1196,7 @@ function enterApp(){
 function logout(){
   if(BACKEND_MODE&&AUTH_TOKEN)apiCall('/api/auth/logout','POST').catch(()=>{});
   AUTH_TOKEN=null;BACKEND_MODE=false;localStorage.removeItem(TOKKEY);localStorage.removeItem(UKEY);
-  S.user=null;document.getElementById('app').classList.add('hidden');
+  S.user=null;DB=null;seed();document.getElementById('app').classList.add('hidden');
   document.getElementById('login').classList.remove('hidden');
 }
 
@@ -2384,7 +2452,7 @@ function empSave(id){const name=val('ef-name'),login=val('ef-login'),pass=val('e
   const d={name,pos:val('ef-pos'),role:val('ef-role'),login};
   if(pass)d.pass=pass; // непустой пароль — backend захэширует его при сохранении; пустой при редактировании = не менять
   if(id)Object.assign(DB.users.find(x=>x.id===id),d);else DB.users.push({id:uid('u'),...d});
-  save();closeModal();go('employees');toast(BACKEND_MODE?'Сохранено':'Сохранено (локально)','ok');}
+  save();closeModal();go('employees');toast('Сохранено','ok');}
 
 /* ================= ПОДПИСКА И ОПЛАТА ================= */
 VIEWS.billing=function(){

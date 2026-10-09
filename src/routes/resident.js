@@ -6,6 +6,9 @@ const { uid } = require('../seedData');
 
 const router = express.Router();
 
+const codeLimiter = auth.rateLimit({ windowMs: 60 * 60 * 1000, max: 10, key: (req) => req.ip, message: 'Слишком много запросов кода. Попробуйте через час.' });
+const requestLimiter = auth.rateLimit({ windowMs: 60 * 60 * 1000, max: 20, key: (req) => req.ip, message: 'Слишком много заявок. Попробуйте позже.' });
+
 /* Отправка SMS с подключаемым провайдером.
 
    Пока SMS_PROVIDER не задан (или = 'console'), коды никуда не уходят —
@@ -57,8 +60,15 @@ async function sendViaSmsc(phone, code) {
 
 /* Отправить код. Возвращает { sent, exposeCode }.
    Если шлюз не настроен — не считаем это ошибкой входа: код виден в логах. */
+const ALLOW_DEV_CODES = process.env.ALLOW_DEV_CODES === 'true';
+
 async function smsSendCode(phone, code) {
   if (SMS_PROVIDER === 'console') {
+    if (!ALLOW_DEV_CODES) {
+      // Без SMS-шлюза вход жителей закрыт: иначе код уходил бы в ответе API,
+      // и любой, кто знает номер телефона жителя, мог бы войти в его кабинет.
+      const e = new Error('SMS-шлюз не подключён'); e.notConfigured = true; throw e;
+    }
     console.log('[SMS/dev] ' + phone + ' → код ' + code + ' (шлюз не подключён, см. SMS_PROVIDER)');
     return { sent: false, exposeCode: true };
   }
@@ -110,16 +120,10 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ba, bb);
 }
 
-/* Чистим протухшие коды, чтобы файл не рос бесконечно */
-function pruneCodes(codes) {
-  const now = Date.now();
-  Object.keys(codes).forEach(k => { if (!codes[k] || codes[k].expires < now) delete codes[k]; });
-  return codes;
-}
 
 /* --- шаг 1: запросить код --- */
 
-router.post('/request-code', async (req, res) => {
+router.post('/request-code', codeLimiter, async (req, res) => {
   const db = await store.getDB();
   if (!db) return res.status(500).json({ error: 'База данных ещё не инициализирована' });
 
@@ -131,30 +135,29 @@ router.post('/request-code', async (req, res) => {
     return res.status(404).json({ error: 'Номер не найден. Обратитесь в УК, чтобы привязать телефон к лицевому счёту.' });
   }
 
-  const codes = pruneCodes(await store.getCodes());
-  const prev = codes[phone];
+  const prev = await store.getCode(phone);
   if (prev && Date.now() - prev.sentAt < RESEND_COOLDOWN_MS) {
     const wait = Math.ceil((RESEND_COOLDOWN_MS - (Date.now() - prev.sentAt)) / 1000);
     return res.status(429).json({ error: 'Код уже отправлен. Повторить можно через ' + wait + ' сек.', retryAfter: wait });
   }
 
   const code = genCode();
-  codes[phone] = {
+  let delivery;
+  try {
+    delivery = await smsSendCode(phone, code);
+  } catch (e) {
+    if (e.notConfigured) return res.status(503).json({ error: 'Вход в приложение жителя пока не подключён. Обратитесь в управляющую компанию.' });
+    console.error('Ошибка отправки SMS:', e.message);
+    return res.status(502).json({ error: 'Не удалось отправить SMS. Попробуйте позже или обратитесь в УК.' });
+  }
+
+  await store.setCode(phone, {
     hash: hashCode(code),
     expires: Date.now() + CODE_TTL_MS,
     attempts: 0,
     sentAt: Date.now(),
     accountIds: matches.map(a => a.id)
-  };
-  await store.saveCodes(codes);
-
-  let delivery;
-  try {
-    delivery = await smsSendCode(phone, code);
-  } catch (e) {
-    console.error('Ошибка отправки SMS:', e.message);
-    return res.status(502).json({ error: 'Не удалось отправить SMS. Попробуйте позже или обратитесь в УК.' });
-  }
+  });
 
   const out = { ok: true, ttl: Math.round(CODE_TTL_MS / 1000), accounts: matches.length };
   // Только когда шлюз не подключён (dev/демо) — иначе код никогда не покидает сервер.
@@ -164,7 +167,7 @@ router.post('/request-code', async (req, res) => {
 
 /* --- шаг 2: проверить код --- */
 
-router.post('/verify-code', async (req, res) => {
+router.post('/verify-code', codeLimiter, async (req, res) => {
   const db = await store.getDB();
   if (!db) return res.status(500).json({ error: 'База данных ещё не инициализирована' });
 
@@ -172,18 +175,17 @@ router.post('/verify-code', async (req, res) => {
   const code = String((req.body || {}).code || '').replace(/\D/g, '');
   const accountId = (req.body || {}).accountId || null;
 
-  const codes = pruneCodes(await store.getCodes());
-  const rec = codes[phone];
+  const rec = await store.getCode(phone);
   if (!rec) return res.status(400).json({ error: 'Код истёк или не запрашивался. Запросите новый.' });
 
   if (rec.attempts >= MAX_ATTEMPTS) {
-    delete codes[phone]; await store.saveCodes(codes);
+    await store.deleteCode(phone);
     return res.status(429).json({ error: 'Слишком много попыток. Запросите новый код.' });
   }
 
   if (!safeEqual(hashCode(code), rec.hash)) {
     rec.attempts += 1;
-    await store.saveCodes(codes);
+    await store.setCode(phone, rec);
     const left = MAX_ATTEMPTS - rec.attempts;
     return res.status(401).json({ error: 'Неверный код' + (left > 0 ? '. Осталось попыток: ' + left : '') });
   }
@@ -207,8 +209,7 @@ router.post('/verify-code', async (req, res) => {
   const account = db.accounts.find(a => a.id === chosen);
   if (!account) return res.status(404).json({ error: 'Лицевой счёт не найден' });
 
-  delete codes[phone];
-  await store.saveCodes(codes);
+  await store.deleteCode(phone);
 
   const token = await auth.createSession({ type: 'resident', accountId: account.id, osiId: account.osiId });
   res.json({ token });
@@ -236,33 +237,29 @@ router.get('/me', auth.requireResident(), async (req, res) => {
 });
 
 router.post('/pay', auth.requireResident(), async (req, res) => {
-  const db = await store.getDB();
-  const accId = req.session.accountId;
-  const account = db.accounts.find(a => a.id === accId);
-  if (!account) return res.status(404).json({ error: 'Лицевой счёт не найден' });
-  const amount = parseFloat((req.body || {}).amount) || 0;
-  if (amount <= 0) return res.status(400).json({ error: 'Некорректная сумма' });
-
-  const periods = [...new Set(db.accruals.filter(a => a.accountId === accId).map(a => a.period))].sort().reverse();
-  const period = periods[0] || new Date().toISOString().slice(0, 7);
-  const payment = { id: uid('pay'), osiId: account.osiId, accountId: accId, period, amount, method: 'kaspi', date: new Date().toISOString().slice(0, 10) };
-  db.payments.push(payment);
-  await store.saveDB(db);
-  res.json({ ok: true, payment });
+  // Отметка «оплачено» без реального платежа недопустима: житель мог бы сам погасить себе долг.
+  // Оплата появится вместе с интеграцией эквайринга (Kaspi Pay / Halyk) — платёж будет фиксироваться
+  // только по подтверждению банка.
+  res.status(501).json({ error: 'Онлайн-оплата пока не подключена. Оплатите по реквизитам в квитанции.' });
 });
 
-router.post('/request', auth.requireResident(), async (req, res) => {
-  const db = await store.getDB();
+router.post('/request', auth.requireResident(), requestLimiter, async (req, res) => {
   const accId = req.session.accountId;
-  const account = db.accounts.find(a => a.id === accId);
-  if (!account) return res.status(404).json({ error: 'Лицевой счёт не найден' });
-  const topic = String((req.body || {}).topic || '').trim();
+  const topic = String((req.body || {}).topic || '').trim().slice(0, 1000);
   if (!topic) return res.status(400).json({ error: 'Опишите проблему' });
-
-  const request = { id: uid('req'), osiId: account.osiId, accountId: accId, topic, assignee: '—', status: 'new', date: new Date().toISOString().slice(0, 10) };
-  db.requests.push(request);
-  await store.saveDB(db);
-  res.json({ ok: true, request });
+  try {
+    const { result } = await store.updateDB((db) => {
+      const account = db.accounts.find(a => a.id === accId);
+      if (!account) { const e = new Error('Лицевой счёт не найден'); e.http = 404; throw e; }
+      const request = { id: uid('req'), osiId: account.osiId, accountId: accId, topic, assignee: '—', status: 'new', date: new Date().toISOString().slice(0, 10), source: 'app' };
+      db.requests.push(request);
+      return request;
+    }, 'resident:' + accId);
+    res.json({ ok: true, request: result });
+  } catch (e) {
+    if (e.http) return res.status(e.http).json({ error: e.message });
+    throw e;
+  }
 });
 
 module.exports = router;
