@@ -46,8 +46,6 @@ input,select,textarea{font-family:inherit}
 .a-opt{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:11px 13px;cursor:pointer}
 .a-opt:hover{border-color:var(--mint)}
 .a-opt b{color:#fff;font-size:13.5px;display:block}.a-opt span{color:#9fd8c8;font-size:11.5px}
-.a-demo{margin-top:10px;background:transparent;border:1px dashed rgba(255,255,255,.3);color:#9fd8c8;border-radius:10px;
-  padding:10px;width:100%;font-size:12.5px}
 .a-code{text-align:center;font-size:26px!important;letter-spacing:10px;font-weight:800;padding:14px 13px!important}
 .a-ph{color:#7fa89b;font-weight:600}
 .a-back{color:#9fd8c8;font-size:12.5px;cursor:pointer;margin-bottom:10px;display:inline-block}
@@ -173,7 +171,6 @@ label.f span{display:block;font-size:12px;color:var(--mut);margin-bottom:5px;fon
 
     <div id="au-results" class="a-list"></div>
     <div id="au-err" class="a-err hidden"></div>
-    <button class="a-demo" onclick="authDemo()">Войти в демо-режиме (без сервера)</button>
   </div>
 
   <!-- APP -->
@@ -224,38 +221,10 @@ async function apiCall(path,method,body){
   return data;
 }
 
-/* ================= ЛОКАЛЬНЫЙ РЕЖИМ (без backend, демо в одном браузере) ================= */
-function loadDB(){try{return JSON.parse(localStorage.getItem(KEY));}catch(e){return null;}}
-function saveDB(){try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){}}
-function ensureDB(){
-  DB=loadDB();
-  if(DB&&DB.osi&&DB.osi.length)return;
-  const oid=uid('osi');
-  DB={org:{name:'ТОО «Управляющая компания»',bin:'123456789012',city:'Астана'},
-    subscription:{plan:'uk',pricePerAccount:35,since:'2026-01-01',status:'active'},
-    users:[{id:'u1',name:'Ильяс Директоров',login:'admin',pass:'admin',role:'director',pos:'Директор УК'}],
-    osi:[{id:oid,name:'ЖК «Алатау»',address:'Астана, пр. Кабанбай батыра 40',bin:'990101300111',chairman:'Нурлан Председатель',phone:'+7 702 111 22 33',createdAt:'2026-01-15',active:true}],
-    houses:[{id:uid('h'),osiId:oid,address:'Астана, пр. Кабанбай батыра 40',floors:9,entrances:2,totalArea:400}],
-    accounts:[], services:[], accruals:[], payments:[], providers:[], provInvoices:[], provPayments:[], requests:[]};
-  const svc=[{name:'Содержание жилья (эксплуатационные)',unit:'m2',tariff:44.6},
-    {name:'Целевой накопительный взнос',unit:'m2',tariff:21.63},
-    {name:'Вывоз ТБО',unit:'apt',tariff:600}];
-  const svcIds=svc.map(s=>{const id=uid('svc');DB.services.push({id,osiId:oid,...s,active:true});return id;});
-  const acc={id:uid('acc'),osiId:oid,houseId:DB.houses[0].id,ls:'demo24',apt:'24',floor:6,area:58.4,
-    owner:'Айгерим Ахметова',phone:'+7 777 123 45 67',persons:3,saldoStart:0};
-  DB.accounts.push(acc);
-  ['2026-05','2026-06','2026-07'].forEach(per=>{
-    let tot=0;svcIds.forEach(sid=>{const s=DB.services.find(x=>x.id===sid);
-      const base=s.unit==='m2'?acc.area:1;const amount=Math.round(s.tariff*base);tot+=amount;
-      DB.accruals.push({id:uid('acr'),osiId:oid,accountId:acc.id,serviceId:sid,period:per,amount,base,unit:s.unit,createdAt:per+'-01'});});
-    if(per!=='2026-07')DB.payments.push({id:uid('pay'),osiId:oid,accountId:acc.id,period:per,amount:tot,method:'kaspi',date:per+'-14'});
-    else DB.payments.push({id:uid('pay'),osiId:oid,accountId:acc.id,period:per,amount:Math.round(tot*0.35),method:'kaspi',date:per+'-05'});
-  });
-  DB.requests.push({id:uid('req'),osiId:oid,accountId:acc.id,topic:'Не работает домофон',status:'work',assignee:'Ерлан',date:'2026-07-10'});
-  saveDB();
-}
-function curAccLocal(){return DB.accounts.find(a=>a.id===SESS.accountId);}
-function curOsiLocal(){const a=curAccLocal();return DB.osi.find(o=>o.id===a.osiId);}
+/* Данные жителя приходят только с сервера */
+function loadDB(){return null;}
+function saveDB(){}
+function ensureDB(){DB={osi:[],houses:[],accounts:[],services:[],accruals:[],payments:[],requests:[]};}
 function buildStateFromLocal(){
   const a=curAccLocal();
   STATE={account:a,osi:curOsiLocal(),
@@ -340,9 +309,7 @@ async function authRequestCode(isResend){
         authStartResendTimer(err.retryAfter);
       }
     }else{
-      // бэкенд недоступен — предлагаем локальный демо-режим, как раньше
-      authErr('Сервер недоступен. Можно войти в демо-режиме — данные только в этом браузере.');
-      authFindLocal(phone);
+      authErr('Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.');
     }
   }finally{ if(btn){btn.disabled=false;} }
 }
@@ -383,24 +350,6 @@ function renderMatches(matches){
     '<div style="color:#9fd8c8;font-size:12.5px;margin-bottom:2px">Выберите лицевой счёт:</div>'+
     matches.map(m=>
     '<div class="a-opt" onclick="authVerifyCode(\''+m.id+'\')"><b>кв. '+esc(m.apt)+' · '+esc(m.owner)+'</b><span>'+esc(m.osiName)+' · л/с '+esc(m.ls||'')+'</span></div>').join('');
-}
-function authFindLocal(q){
-  ensureDB();
-  const digits=q.replace(/\D/g,'');
-  const matches=DB.accounts.filter(a=>{const ph=(a.phone||'').replace(/\D/g,'');
-    return (digits.length>=4&&ph.indexOf(digits)>=0)||String(a.ls||'').trim()===q.trim()||String(a.apt||'').trim()===q.trim();});
-  const box=document.getElementById('au-results');
-  if(!matches.length){box.innerHTML='<div class="a-opt" style="cursor:default"><b>Не найдено</b><span>Сервер недоступен — поиск выполнен по локальным демо-данным браузера. Попробуйте демо-режим ниже.</span></div>';return;}
-  box.innerHTML=matches.map(a=>{const o=DB.osi.find(x=>x.id===a.osiId);
-    return '<div class="a-opt" onclick="authEnterLocal(\''+a.id+'\')"><b>кв. '+esc(a.apt)+' · '+esc(a.owner)+'</b><span>'+esc(o?o.name:'')+' · л/с '+esc(a.ls)+' (локально)</span></div>';}).join('');
-}
-function authEnterLocal(accId){
-  API_MODE=false;SESS={accountId:accId,mode:'local'};localStorage.setItem(SESSKEY,JSON.stringify(SESS));
-  buildStateFromLocal();showApp();
-}
-function authDemo(){
-  ensureDB();const acc=DB.accounts.find(a=>a.ls==='demo24')||DB.accounts[0];
-  if(acc)authEnterLocal(acc.id);else toast('Демо-данные недоступны');
 }
 async function enterApi(){
   const data=await apiCall('/api/resident/me');
@@ -459,29 +408,25 @@ function renderHome(){
   return h;
 }
 
-/* ---------- ОПЛАТА (демо) ---------- */
+/* ---------- ОПЛАТА: реквизиты ---------- */
 function openPay(){
-  const bal=stBalance();
+  const bal=stBalance();const o=STATE.osi||{};const a=STATE.account;
   document.getElementById('modal-root').innerHTML=
    '<div class="mbg" onclick="if(event.target===this)closeModal()"><div class="msheet">'+
-   '<h3>Оплата · Kaspi Pay (демо)</h3>'+
-   '<label class="f"><span>Сумма к оплате</span><input class="f" id="pay-amt" type="number" value="'+Math.max(0,Math.round(bal))+'"></label>'+
-   '<button class="btn-main" onclick="doPay()">Оплатить</button>'+
-   '<button class="btn-gho" style="margin-top:8px" onclick="closeModal()">Отмена</button>'+
-   '<p class="small muted" style="margin-top:10px;text-align:center">Демо-платёж: сумма сразу спишет долг'+(API_MODE?' и появится в веб-кабинете УК.':' (локально, в этом браузере).')+'</p>'+
+   '<h3>Как оплатить</h3>'+
+   '<p class="small muted" style="margin:6px 0 12px">Переведите сумму на счёт вашего ОСИ через приложение банка. В назначении платежа обязательно укажите номер лицевого счёта.</p>'+
+   '<div class="card">'+
+   '<div class="row-item"><div class="ic">💰</div><div><b>'+money(Math.max(0,Math.round(bal)))+'</b><span>К оплате</span></div></div>'+
+   '<div class="row-item"><div class="ic">🏢</div><div><b>'+esc(o.name||'—')+'</b><span>Получатель'+(o.bin?' · БИН '+esc(o.bin):'')+'</span></div></div>'+
+   '<div class="row-item"><div class="ic">🏦</div><div><b>'+esc(o.iban||'—')+'</b><span>'+esc(o.bank||'IBAN получателя')+'</span></div></div>'+
+   '<div class="row-item"><div class="ic">🔢</div><div><b>'+esc(a.ls||'—')+'</b><span>Лицевой счёт — укажите в назначении</span></div></div>'+
+   '</div>'+
+   (o.iban?'<button class="btn-main" style="margin-top:12px" onclick="copyText(\''+esc(o.iban)+'\')">Скопировать IBAN</button>':'')+
+   '<button class="btn-gho" style="margin-top:8px" onclick="closeModal()">Закрыть</button>'+
+   '<p class="small muted" style="margin-top:10px;text-align:center">Оплата отразится после поступления денег на счёт ОСИ.</p>'+
    '</div></div>';
 }
-async function doPay(){
-  const amt=parseFloat(document.getElementById('pay-amt').value)||0;
-  if(amt<=0){toast('Укажите сумму');return;}
-  try{
-    if(API_MODE){await apiCall('/api/resident/pay','POST',{amount:amt});await refreshState();}
-    else{const pers=stPeriods();const per=pers[0]||today().slice(0,7);
-      DB.payments.push({id:uid('pay'),osiId:STATE.account.osiId,accountId:STATE.account.id,period:per,amount:amt,method:'kaspi',date:today()});
-      saveDB();buildStateFromLocal();}
-    closeModal();toast('Оплата на '+money(amt)+' проведена ✓');tab('home');
-  }catch(e){toast(e.message||'Не удалось провести оплату');}
-}
+function copyText(t){try{navigator.clipboard.writeText(t);toast('Скопировано');}catch(e){toast(t);}}
 function openMeters(){
   document.getElementById('modal-root').innerHTML=
    '<div class="mbg" onclick="if(event.target===this)closeModal()"><div class="msheet">'+
@@ -590,7 +535,7 @@ function renderProfile(){
    '<div class="row-item"><div class="ic">📱</div><div><b>'+esc(a.phone||'—')+'</b><span>Телефон</span></div></div>'+
    '<div class="row-item"><div class="ic">🔢</div><div><b>'+esc(a.ls)+'</b><span>Лицевой счёт</span></div></div>'+
    '</div><button class="btn-gho" style="margin-top:14px" onclick="logout()">Выйти из аккаунта</button>'+
-   '<p class="small muted" style="margin-top:14px;text-align:center">Turgyn App v1.1 · '+(API_MODE?'подключено к серверу УК':'локальный демо-режим (без сервера, данные только в этом браузере)')+'</p>';
+   '<p class="small muted" style="margin-top:14px;text-align:center">Turgyn · личный кабинет жителя</p>';
 }
 function renderNotif(){
   const bal=stBalance();const items=[];
@@ -609,10 +554,7 @@ function renderNotif(){
   if(SESS&&SESS.token){
     API_MODE=true;
     try{await enterApi();}catch(e){localStorage.removeItem(SESSKEY);SESS=null;API_MODE=false;}
-  }else if(SESS&&SESS.accountId){
-    API_MODE=false;ensureDB();
-    if(DB.accounts.find(a=>a.id===SESS.accountId)){buildStateFromLocal();showApp();}
-  }
+  }else if(SESS){localStorage.removeItem(SESSKEY);SESS=null;}
 })();
 
 </script>

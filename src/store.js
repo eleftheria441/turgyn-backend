@@ -48,6 +48,18 @@ async function init() {
       details     jsonb
     );
     CREATE INDEX IF NOT EXISTS audit_log_at_idx ON audit_log (at DESC);
+    CREATE TABLE IF NOT EXISTS leads (
+      id          bigserial PRIMARY KEY,
+      at          timestamptz NOT NULL DEFAULT now(),
+      org         text NOT NULL,
+      contact     text NOT NULL,
+      phone       text NOT NULL,
+      accounts    integer,
+      role        text,
+      comment     text,
+      ip          text,
+      status      text NOT NULL DEFAULT 'new'
+    );
     CREATE TABLE IF NOT EXISTS state_snapshots (
       id          bigserial PRIMARY KEY,
       at          timestamptz NOT NULL DEFAULT now(),
@@ -183,6 +195,21 @@ async function getAudit(limit) {
   return r.rows;
 }
 
+/* ---------- заявки с сайта ---------- */
+
+async function addLead(l) {
+  const r = await pool.query('INSERT INTO leads (org, contact, phone, accounts, role, comment, ip) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
+    [l.org, l.contact, l.phone, l.accounts, l.role, l.comment, l.ip]);
+  return r.rows[0].id;
+}
+async function getLeads() {
+  const r = await pool.query('SELECT id, at, org, contact, phone, accounts, role, comment, status FROM leads ORDER BY id DESC LIMIT 500');
+  return r.rows;
+}
+async function setLeadStatus(id, status) {
+  await pool.query('UPDATE leads SET status = $2 WHERE id = $1', [id, status]);
+}
+
 /* ---------- обслуживание ---------- */
 
 async function cleanup() {
@@ -193,5 +220,5 @@ async function cleanup() {
 module.exports = {
   pool, init, getState, getDB, getUsers, dbExists, saveDB, updateDB, ConflictError,
   createSession, getSession, destroySession, destroyUserSessions,
-  getCode, setCode, deleteCode, audit, getAudit, cleanup
+  getCode, setCode, deleteCode, audit, getAudit, cleanup, addLead, getLeads, setLeadStatus
 };

@@ -32,10 +32,13 @@ app.get('/api/health', async (req, res) => {
 app.use('/api/auth', require('./src/routes/auth'));
 app.use('/api/state', require('./src/routes/state'));
 app.use('/api/resident', require('./src/routes/resident'));
+app.use('/api/leads', require('./src/routes/leads'));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Не найдено' }));
 
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 app.get('/app.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
+app.get(['/cabinet', '/cabinet/'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'cabinet.html')));
+app.get('/cabinet.html', (req, res) => res.redirect(301, '/cabinet'));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // Единый обработчик ошибок: детали — в лог сервера, клиенту — без внутренностей
