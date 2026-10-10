@@ -124,8 +124,7 @@ function safeEqual(a, b) {
 /* --- шаг 1: запросить код --- */
 
 router.post('/request-code', codeLimiter, async (req, res) => {
-  const db = await store.getDB();
-  if (!db) return res.status(500).json({ error: 'База данных ещё не инициализирована' });
+  const db = { accounts: await store.getAll('accounts'), osi: await store.getAll('osi') };
 
   const phone = normPhone((req.body || {}).phone);
   if (phone.length < 10) return res.status(400).json({ error: 'Укажите номер телефона' });
@@ -168,8 +167,7 @@ router.post('/request-code', codeLimiter, async (req, res) => {
 /* --- шаг 2: проверить код --- */
 
 router.post('/verify-code', codeLimiter, async (req, res) => {
-  const db = await store.getDB();
-  if (!db) return res.status(500).json({ error: 'База данных ещё не инициализирована' });
+  const db = { accounts: await store.getAll('accounts'), osi: await store.getAll('osi') };
 
   const phone = normPhone((req.body || {}).phone);
   const code = String((req.body || {}).code || '').replace(/\D/g, '');
@@ -221,18 +219,17 @@ router.post('/logout', auth.requireResident(), async (req, res) => {
 });
 
 router.get('/me', auth.requireResident(), async (req, res) => {
-  const db = await store.getDB();
   const accId = req.session.accountId;
-  const account = db.accounts.find(a => a.id === accId);
+  const account = await store.getById('accounts', accId);
   if (!account) return res.status(404).json({ error: 'Лицевой счёт не найден' });
-  const osi = db.osi.find(o => o.id === account.osiId) || null;
+  const osi = await store.getById('osi', account.osiId);
   res.json({
     account,
     osi,
-    services: db.services.filter(s => s.osiId === account.osiId),
-    accruals: db.accruals.filter(a => a.accountId === accId),
-    payments: db.payments.filter(p => p.accountId === accId),
-    requests: db.requests.filter(r => r.accountId === accId)
+    services: await store.getByOsi('services', account.osiId),
+    accruals: await store.getByAccount('accruals', accId),
+    payments: await store.getByAccount('payments', accId),
+    requests: await store.getByAccount('requests', accId)
   });
 });
 
@@ -247,19 +244,11 @@ router.post('/request', auth.requireResident(), requestLimiter, async (req, res)
   const accId = req.session.accountId;
   const topic = String((req.body || {}).topic || '').trim().slice(0, 1000);
   if (!topic) return res.status(400).json({ error: 'Опишите проблему' });
-  try {
-    const { result } = await store.updateDB((db) => {
-      const account = db.accounts.find(a => a.id === accId);
-      if (!account) { const e = new Error('Лицевой счёт не найден'); e.http = 404; throw e; }
-      const request = { id: uid('req'), osiId: account.osiId, accountId: accId, topic, assignee: '—', status: 'new', date: new Date().toISOString().slice(0, 10), source: 'app' };
-      db.requests.push(request);
-      return request;
-    }, 'resident:' + accId);
-    res.json({ ok: true, request: result });
-  } catch (e) {
-    if (e.http) return res.status(e.http).json({ error: e.message });
-    throw e;
-  }
+  const account = await store.getById('accounts', accId);
+  if (!account) return res.status(404).json({ error: 'Лицевой счёт не найден' });
+  const request = { id: uid('req'), osiId: account.osiId, accountId: accId, topic, assignee: '—', status: 'new', date: new Date().toISOString().slice(0, 10), source: 'app' };
+  await store.insertOne('requests', request, 'resident:' + accId);
+  res.json({ ok: true, request });
 });
 
 module.exports = router;

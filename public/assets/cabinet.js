@@ -69,7 +69,73 @@ function accOpen(a){return (a?(a.saldoStart||0):0)+accSvcOpen(a);}
 function svcBal(accId,svcId,per){const a=DB.accounts.find(x=>x.id===accId)||{};
   let b=(a.saldoBySvc&&a.saldoBySvc[svcId])||0;
   const m=accM(accId);for(const p in m){if(per&&!(p<per))continue;const d=m[p];const ac=d.s[svcId]||0;b+=ac-(d.a>0?d.pay*ac/d.a:0);}return b;}
-let SAVING=false,SAVE_AGAIN=false,PENDING=false;
+/* ================= СИНХРОНИЗАЦИЯ С СЕРВЕРОМ =================
+   На сервер уходят только изменённые записи. SYNC хранит то, что сервер уже знает,
+   — по нему вычисляется разница. Правки коллег приходят в ответе на сохранение
+   и при опросе раз в 30 секунд. */
+const COLLS=['osi','houses','accounts','services','accruals','payments','providers','provInvoices','provPayments','requests','expenses'];
+const SETKEYS=['org','subscription','penalty','importLog','expenseCategories'];
+const DEFAULT_EXP_CATS=['Заработная плата','Налоги и отчисления с зарплаты','Содержание и уборка','Вывоз ТБО','Коммунальные услуги на общедомовые нужды','Текущий ремонт','Капитальный ремонт','Обслуживание лифтов','Банковские услуги и комиссии','Хозяйственные расходы','Прочие расходы'];
+let SYNC=null;
+let SAVING=false,SAVE_AGAIN=false,PENDING=false,RETRY_TIMER=null;
+function normalizeDB(){
+  COLLS.forEach(c=>{if(!Array.isArray(DB[c]))DB[c]=[];});
+  if(!DB.org)DB.org={name:'',bin:'',city:'',phone:''};
+  if(!Array.isArray(DB.importLog))DB.importLog=[];
+  if(!DB.penalty)DB.penalty={enabled:false,rate:0.05};
+  if(!Array.isArray(DB.expenseCategories)||!DB.expenseCategories.length)DB.expenseCategories=DEFAULT_EXP_CATS.slice();
+  if(!Array.isArray(DB._locks))DB._locks=[];
+  if(!Array.isArray(DB.users))DB.users=[];
+}
+const sj=v=>JSON.stringify(v===undefined?null:v);
+function snapshotSync(){
+  SYNC={c:{},s:{},u:new Map()};
+  COLLS.forEach(c=>{const m=new Map();DB[c].forEach(r=>{if(r&&r.id)m.set(r.id,sj(r));});SYNC.c[c]=m;});
+  SETKEYS.forEach(k=>{SYNC.s[k]=sj(DB[k]);});
+  DB.users.forEach(u=>SYNC.u.set(u.id,sj(u)));
+}
+function computeDiff(){
+  const changes={},settings={},snap={c:{},s:{},u:null};let users=null,n=0;
+  COLLS.forEach(c=>{
+    const prev=SYNC.c[c],seen=new Set(),ups=[],js=[];
+    DB[c].forEach(r=>{if(!r)return;if(!r.id)r.id=uid(c);seen.add(r.id);const j=sj(r);if(prev.get(r.id)!==j){ups.push(r);js.push([r.id,j]);}});
+    const dels=[];prev.forEach((_,id)=>{if(!seen.has(id))dels.push(id);});
+    if(ups.length||dels.length){changes[c]={upsert:ups,delete:dels};snap.c[c]={js,dels};n+=ups.length+dels.length;}
+  });
+  SETKEYS.forEach(k=>{const j=sj(DB[k]);if(SYNC.s[k]!==j){settings[k]=DB[k];snap.s[k]=j;n++;}});
+  if(S.user&&S.user.role==='director'){
+    const seen=new Set(),ups=[];
+    DB.users.forEach(u=>{seen.add(u.id);if(u.pass||SYNC.u.get(u.id)!==sj(u))ups.push(u);});
+    const dels=[];SYNC.u.forEach((_,id)=>{if(!seen.has(id))dels.push(id);});
+    if(ups.length||dels.length){users={upsert:ups,delete:dels};snap.u=true;n++;}
+  }
+  return {changes,settings,users,snap,n};
+}
+function markSynced(snap){
+  Object.keys(snap.c).forEach(c=>{const m=SYNC.c[c];snap.c[c].js.forEach(([id,j])=>m.set(id,j));snap.c[c].dels.forEach(id=>m.delete(id));});
+  Object.keys(snap.s).forEach(k=>{SYNC.s[k]=snap.s[k];});
+  if(snap.u){DB.users.forEach(u=>{delete u.pass;});SYNC.u=new Map();DB.users.forEach(u=>SYNC.u.set(u.id,sj(u)));}
+}
+/* применить правки коллег; записи, которые пользователь правит прямо сейчас, не трогаем —
+   при сохранении сервер вернёт конфликт и мы перезагрузим данные */
+function applyPulled(p){
+  if(!p)return false;
+  if(p.reset){toast('Данные обновлены директором — загружаю актуальную версию','ok');reloadState();return true;}
+  let changed=false;
+  Object.keys(p.upsert||{}).forEach(c=>{if(!DB[c])return;
+    const pos=new Map();DB[c].forEach((r,i)=>pos.set(r.id,i));
+    p.upsert[c].forEach(r=>{const i=pos.get(r.id);
+      if(i!==undefined){if(sj(DB[c][i])!==SYNC.c[c].get(r.id))return;DB[c][i]=r;}else{DB[c].push(r);pos.set(r.id,DB[c].length-1);}
+      SYNC.c[c].set(r.id,sj(r));changed=true;});});
+  Object.keys(p.delete||{}).forEach(c=>{if(!DB[c])return;const del=new Set(p.delete[c]);
+    const before=DB[c].length;DB[c]=DB[c].filter(r=>!del.has(r.id));del.forEach(id=>SYNC.c[c].delete(id));if(DB[c].length!==before)changed=true;});
+  Object.keys(p.settings||{}).forEach(k=>{DB[k]=p.settings[k];SYNC.s[k]=sj(p.settings[k]);changed=true;});
+  if(p.users){DB.users=p.users;SYNC.u=new Map();DB.users.forEach(u=>SYNC.u.set(u.id,sj(u)));changed=true;}
+  if(p.locks){DB._locks=p.locks;changed=true;}
+  if(p.version>DB._v)DB._v=p.version;
+  if(changed){_IDX=null;normalizeDB();if(!document.getElementById('modal-root').innerHTML&&S.user)go(S.view);}
+  return changed;
+}
 function save(){
   _IDX=null;
   if(!(BACKEND_MODE&&AUTH_TOKEN))return;
@@ -78,37 +144,54 @@ function save(){
 }
 async function pushState(){
   if(SAVING){SAVE_AGAIN=true;return;}
+  clearTimeout(RETRY_TIMER);
+  const d=computeDiff();
+  if(!d.n){PENDING=false;setSaveState('ok');return;}
   SAVING=true;setSaveState('saving');
   try{
-    const r=await apiCall('/api/state','POST',DB);
+    const r=await apiCall('/api/state/changes','POST',{base:DB._v,changes:d.changes,settings:d.settings,users:d.users});
+    markSynced(d.snap);
     DB._v=r.version;
-    (DB.users||[]).forEach(u=>{delete u.pass;}); // пароль ушёл на сервер и захэширован — в памяти не держим
+    applyPulled(r.pulled);
     if(!SAVE_AGAIN)PENDING=false;
     setSaveState(PENDING?'saving':'ok');
   }catch(e){
-    PENDING=false;
-    if(e.status===409){
-      toast('Данные изменил другой сотрудник. Загружена актуальная версия — повторите последнее действие.','bad');
+    if(e.status===409||e.status===423||e.status===400){
+      PENDING=false;
+      toast(e.message||'Изменения не приняты','bad');
       await reloadState();
     }else if(e.status===401){
-      toast('Сессия истекла — войдите снова','bad');logout();
+      PENDING=false;toast('Сессия истекла — войдите снова','bad');logout();
     }else{
+      // нет связи — изменения остаются в памяти, повторяем
       setSaveState('err');
-      toast('Не удалось сохранить: '+(e.api?e.message:'нет связи с сервером')+'. Изменения не сохранены — не закрывайте страницу.','bad');
+      toast('Нет связи с сервером. Изменения не сохранены — повторю автоматически, не закрывайте страницу.','bad');
+      RETRY_TIMER=setTimeout(pushState,5000);
     }
   }finally{
     SAVING=false;
     if(SAVE_AGAIN){SAVE_AGAIN=false;pushState();}
   }
 }
+async function pollChanges(){
+  if(!(BACKEND_MODE&&AUTH_TOKEN)||SAVING||PENDING||document.hidden)return;
+  try{const p=await apiCall('/api/state/since?v='+DB._v);if(!PENDING&&!SAVING)applyPulled(p);}
+  catch(e){if(e.status===401){toast('Сессия истекла — войдите снова','bad');logout();}}
+}
+setInterval(pollChanges,30000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)pollChanges();});
+async function loadServerState(){DB=await apiCall('/api/state');normalizeDB();snapshotSync();_IDX=null;}
 async function reloadState(){
-  try{DB=await apiCall('/api/state');_IDX=null;if(S.osi&&!DB.osi.find(o=>o.id===S.osi))S.osi=DB.osi.length?DB.osi[0].id:null;boot();}
+  try{await loadServerState();if(S.osi&&!DB.osi.find(o=>o.id===S.osi))S.osi=DB.osi.length?DB.osi[0].id:null;closeModal();boot();}
   catch(e){toast('Не удалось загрузить данные с сервера','bad');}
 }
 function setSaveState(st){
   const cb=document.getElementById('conn-badge');if(!cb)return;
   cb.innerHTML=st==='saving'?'<span class="pill mut">Сохранение…</span>':st==='err'?'<span class="pill bad">⚠ Не сохранено</span>':connBadge();
 }
+/* закрытые периоды */
+function isLocked(osiId,per){return !!(DB&&DB._locks||[]).find(l=>l.osiId===osiId&&l.period===per);}
+function lockedMsg(per){return 'Период «'+perName(per)+'» закрыт. Исправления вносятся корректировкой в открытом периоде.';}
 window.addEventListener('beforeunload',e=>{if(PENDING||SAVING){e.preventDefault();e.returnValue='';}});
 function load(){const r=localStorage.getItem(KEY); if(r){try{DB=JSON.parse(r);}catch(e){DB=null;}} if(!DB)seed();}
 function initDB(after){
@@ -117,8 +200,8 @@ function initDB(after){
   if(!DB)seed();
   // если есть сохранённый токен сессии — пробуем восстановить реальную серверную сессию без повторного ввода пароля
   if(AUTH_TOKEN){
-    apiCall('/api/state').then(d=>{
-      DB=d;BACKEND_MODE=true;
+    loadServerState().then(()=>{
+      BACKEND_MODE=true;
       try{S.user=JSON.parse(localStorage.getItem(UKEY));}catch(e){}
       if(after)after(true);
     }).catch(()=>{AUTH_TOKEN=null;localStorage.removeItem(TOKKEY);localStorage.removeItem(UKEY);if(after)after(false);});
@@ -126,7 +209,8 @@ function initDB(after){
     if(after)after(false);
   }
 }
-function uid(p){return (p||'id')+'_'+Math.random().toString(36).slice(2,9);}
+/* 72 бита случайности: совпадение id исключено даже на миллионах записей */
+function uid(p){const b=new Uint8Array(9);crypto.getRandomValues(b);return (p||'id')+'_'+btoa(String.fromCharCode(...b)).replace(/\+/g,'-').replace(/\//g,'_');}
 
 /* ---------- seed ---------- */
 function seed(){
@@ -224,14 +308,15 @@ function provBalance(pid){ let b=0;
   DB.provPayments.filter(x=>x.providerId===pid).forEach(x=>b-=x.amount);
   return b;
 }
+function curMonth(){return new Date().toISOString().slice(0,7);}
 function periods(){const set=new Set();DB.accruals.forEach(a=>set.add(a.period));
-  DB.payments.forEach(p=>set.add(p.period));if(!set.size)set.add('2026-06');
+  DB.payments.forEach(p=>set.add(p.period));(DB.expenses||[]).forEach(x=>set.add(x.period));if(!set.size)set.add(curMonth());
   return [...set].sort().reverse();}
 function perName(p){if(String(p).indexOf('-')<0)return String(p)+' г.';
   const ru=['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   const kz=['','Қаңтар','Ақпан','Наурыз','Сәуір','Мамыр','Маусым','Шілде','Тамыз','Қыркүйек','Қазан','Қараша','Желтоқсан'];
   const m=(typeof ALANG!=='undefined'&&ALANG==='kz')?kz:ru;const [y,mm]=p.split('-');return m[+mm]+' '+y;}
-function methodName(m){return {kaspi:'Kaspi',card:'Карта',bank:'Банк',cash:'Наличные'}[m]||m;}
+function methodName(m){return {kaspi:'Kaspi',card:'Карта',bank:'Банк',cash:'Наличные',correction:'Корректировка'}[m]||m;}
 function toast(msg,type){if(typeof D!=='undefined'&&ALANG==='kz'&&D[msg])msg=D[msg];const t=document.createElement('div');t.className='toast '+(type||'');t.innerHTML=msg;
   document.getElementById('toast').appendChild(t);setTimeout(()=>{t.style.opacity=0;setTimeout(()=>t.remove(),300);},2600);}
 
@@ -252,6 +337,8 @@ const NAV=[
   {v:'registers',t:'Реестры',ic:'book',roles:['director','accountant']},
   {v:'balance',t:'Оборотно-сальдовая',ic:'scale',roles:['director','accountant']},
   {v:'reconcile',t:'Акты сверки',ic:'swap',roles:['director','accountant']},
+  {v:'expenses',t:'Расходы',ic:'wallet',roles:['director','accountant']},
+  {v:'capital',t:'Капремонт',ic:'house',roles:['director','accountant']},
   {v:'pnl',t:'Доходы и расходы',ic:'chart',roles:['director','accountant']},
   {g:'Юридический блок'},
   {v:'legal',t:'Протоколы и взыскание',ic:'doc',roles:['director','accountant']},
@@ -271,7 +358,7 @@ const KZ={
     'Бухгалтерия':'Бухгалтерия','Юридический блок':'Заң блогы','ИИ-аналитика':'ИИ-аналитика','Управление':'Басқару'},
   v:{dashboard:'Басты бет',osi:'ОСИ (клиенттер)',accounts:'Жеке шоттар',providers:'Қызмет жеткізушілер',
     services:'Қызметтер мен тарифтер',accruals:'Есептеулер',payments:'Төлемдер (қабылдау)',receipts:'Түбіртектер',registers:'Тізілімдер',
-    balance:'Айналым-сальдо',reconcile:'Салыстыру актілері',pnl:'Кірістер мен шығыстар',
+    balance:'Айналым-сальдо',reconcile:'Салыстыру актілері',expenses:'Шығыстар',capital:'Күрделі жөндеу',pnl:'Кірістер мен шығыстар',
     legal:'Хаттамалар мен өндіріп алу',ai:'AI-аналитик',requests:'Тұрғын өтінімдері',employees:'БК қызметкерлері',
     leads:'Сайттан өтінімдер',settings:'Баптаулар'}
 };
@@ -367,7 +454,7 @@ async function doLogin(){
       AUTH_TOKEN=data.token;localStorage.setItem(TOKKEY,AUTH_TOKEN);localStorage.setItem(UKEY,JSON.stringify(data.user));
       S.user=data.user;BACKEND_MODE=true;
       document.getElementById('lg-pass').value='';
-      DB=await apiCall('/api/state');
+      await loadServerState();
       await offerMigration();
       if(!S.osi&&DB.osi.length)S.osi=DB.osi[0].id;
       enterApp();
@@ -389,11 +476,10 @@ async function offerMigration(){
     (serverEmpty?'Перенести их на сервер?':'ВНИМАНИЕ: на сервере уже есть данные ('+DB.osi.length+' ОСИ). Перенос ЗАМЕНИТ их данными из браузера.\n\nПеренести?')+
     '\n\nОтмена — данные в браузере останутся, перенести можно при следующем входе.';
   if(!confirm(msg))return;
-  const v=DB._v;const users=DB.users;
-  const next=Object.assign({},local,{users:users,_v:v}); // сотрудники и пароли — только серверные
+  const next=Object.assign({},local);delete next.users; // сотрудники и пароли — только серверные
   try{
-    const r=await apiCall('/api/state','POST',next);
-    DB=await apiCall('/api/state');
+    await apiCall('/api/state/replace','POST',{data:next});
+    await loadServerState();
     localStorage.removeItem(KEY);
     toast('Данные перенесены на сервер','ok');
   }catch(e){toast('Перенос не удался: '+(e.message||'ошибка'),'bad');}
@@ -426,7 +512,7 @@ function enterApp(){
 function logout(){
   if(BACKEND_MODE&&AUTH_TOKEN)apiCall('/api/auth/logout','POST').catch(()=>{});
   AUTH_TOKEN=null;BACKEND_MODE=false;localStorage.removeItem(TOKKEY);localStorage.removeItem(UKEY);
-  S.user=null;DB=null;seed();document.getElementById('app').classList.add('hidden');
+  S.user=null;DB=null;SYNC=null;PENDING=false;clearTimeout(saveTimer);clearTimeout(RETRY_TIMER);seed();normalizeDB();document.getElementById('app').classList.add('hidden');
   document.getElementById('login').classList.remove('hidden');
 }
 
@@ -467,7 +553,7 @@ function go(v){
   const meta=NAV.find(n=>n.v===v)||{t:'Дашборд'};
   document.getElementById('pg-title').textContent=navT(meta);
   document.getElementById('pg-path').textContent=DB.org.name+(curOsi()&&v!=='osi'&&v!=='dashboard'&&v!=='employees'&&v!=='leads'&&v!=='settings'?' · '+curOsi().name:'');
-  const need=['accounts','providers','services','accruals','payments','receipts','registers','balance','reconcile','pnl','requests','legal'];
+  const need=['accounts','providers','services','accruals','payments','receipts','registers','balance','reconcile','pnl','requests','legal','expenses','capital'];
   if(need.includes(v)&&!curOsi()){
     document.getElementById('view').innerHTML=emptyState('Нет выбранного ОСИ','Сначала добавьте клиента (ОСИ) в разделе «ОСИ (клиенты)».',
       '<button class="btn" onclick="go(\'osi\')">Перейти к ОСИ</button>');
@@ -592,8 +678,10 @@ function osiForm(id){
     fld('Адрес*','of-addr',o.address,'ул. ..., дом ...','full')+
     fld('Председатель','of-chair',o.chairman,'ФИО')+
     fld('Телефон','of-phone',o.phone,'+7 ...')+
-    fld('IBAN (расчётный счёт)','of-iban',o.iban,'KZ...')+
-    fld('Банк','of-bank',o.bank,'Halyk Bank')+
+    fld('IBAN текущего счёта (содержание)','of-iban',o.iban,'KZ...')+
+    fld('Банк текущего счёта','of-bank',o.bank,'Halyk Bank')+
+    fld('IBAN сберегательного счёта (капремонт)','of-siban',o.savingsIban,'KZ...')+
+    fld('Банк сберегательного счёта','of-sbank',o.savingsBank,'Halyk Bank')+
     '</div>',
     '<button class="btn gho" onclick="closeModal()">Отмена</button>'+
     '<button class="btn" onclick="osiSave(\''+(id||'')+'\')">'+svg(IC.check)+'Сохранить</button>');
@@ -603,10 +691,10 @@ function osiSave(id){
   const name=val('of-name'),addr=val('of-addr');
   if(!name){toast('Укажите наименование ОСИ','bad');return;}
   if(id){const o=DB.osi.find(x=>x.id===id);Object.assign(o,{name,bin:val('of-bin'),city:val('of-city'),
-    address:addr,chairman:val('of-chair'),phone:val('of-phone'),iban:val('of-iban'),bank:val('of-bank')});
+    address:addr,chairman:val('of-chair'),phone:val('of-phone'),iban:val('of-iban'),bank:val('of-bank'),savingsIban:val('of-siban'),savingsBank:val('of-sbank')});
     toast('ОСИ обновлён','ok');}
   else{const nid=uid('osi');DB.osi.push({id:nid,name,bin:val('of-bin'),city:val('of-city'),address:addr,
-    chairman:val('of-chair'),phone:val('of-phone'),iban:val('of-iban'),bank:val('of-bank'),
+    chairman:val('of-chair'),phone:val('of-phone'),iban:val('of-iban'),bank:val('of-bank'),savingsIban:val('of-siban'),savingsBank:val('of-sbank'),
     createdAt:new Date().toISOString().slice(0,10),active:true});
     S.osi=nid; toast('ОСИ добавлен. Теперь заполните дом и лицевые счета.','ok');}
   save();closeModal();renderOsiPicker();go('osi');
@@ -756,10 +844,11 @@ function provForm(id){const p=id?DB.providers.find(x=>x.id===id):{};
   modal(id?'Редактировать поставщика':'Новый поставщик',
     '<div class="form-grid">'+fld('Наименование*','pf-name',p.name,'ТОО «...»','full')+
     fld('Вид услуги','pf-svc',p.service,'Водоснабжение')+fld('БИН','pf-bin',p.bin,'')+
-    fld('Телефон','pf-phone',p.phone,'')+fld('IBAN','pf-iban',p.iban,'KZ...')+'</div>',
+    fld('Телефон','pf-phone',p.phone,'')+fld('IBAN','pf-iban',p.iban,'KZ...')+
+    '<label class="fld full"><span>Статья расходов для отчёта</span><select id="pf-cat">'+expCatOptions(p.category||'Содержание и уборка')+'</select></label></div>',
     '<button class="btn gho" onclick="closeModal()">Отмена</button><button class="btn" onclick="provSave(\''+(id||'')+'\')">'+svg(IC.check)+'Сохранить</button>');}
 function provSave(id){const name=val('pf-name');if(!name){toast('Укажите наименование','bad');return;}
-  const d={name,service:val('pf-svc'),bin:val('pf-bin'),phone:val('pf-phone'),iban:val('pf-iban')};
+  const d={name,service:val('pf-svc'),bin:val('pf-bin'),phone:val('pf-phone'),iban:val('pf-iban'),category:val('pf-cat')};
   if(id)Object.assign(DB.providers.find(x=>x.id===id),d);
   else DB.providers.push({id:uid('prov'),osiId:S.osi,...d});
   save();closeModal();go('providers');toast('Сохранено','ok');}
@@ -768,14 +857,14 @@ function provInvForm(pid){const p=DB.providers.find(x=>x.id===pid);
     perSelectFld('pi-per')+fld('Сумма, ₸*','pi-amt','','150000','','number')+
     fld('Дата','pi-date',today(),'','','')+fld('Описание','pi-desc','','Услуги за период','full')+'</div>',
     '<button class="btn gho" onclick="closeModal()">Отмена</button><button class="btn" onclick="provInvSave(\''+pid+'\')">Провести</button>');}
-function provInvSave(pid){const amt=parseFloat(val('pi-amt'))||0;if(!amt){toast('Укажите сумму','bad');return;}
+function provInvSave(pid){const amt=parseFloat(val('pi-amt'))||0;if(!amt){toast('Укажите сумму','bad');return;}if(!guardPeriod(val('pi-per')))return;
   DB.provInvoices.push({id:uid('pinv'),osiId:S.osi,providerId:pid,period:val('pi-per'),amount:amt,date:val('pi-date'),desc:val('pi-desc')});
   save();closeModal();go('providers');toast('Накладная проведена','ok');}
 function provPayForm(pid){const p=DB.providers.find(x=>x.id===pid);const bal=provBalance(pid);
   modal('Оплата поставщику '+esc(p.name),'<p class="small muted" style="margin-bottom:12px">Текущая задолженность: <b class="neg">'+money(bal)+'</b></p><div class="form-grid">'+
     perSelectFld('pp-per')+fld('Сумма, ₸*','pp-amt',bal>0?bal:'','','','number')+fld('Дата','pp-date',today(),'','','')+'</div>',
     '<button class="btn gho" onclick="closeModal()">Отмена</button><button class="btn" onclick="provPaySave(\''+pid+'\')">Оплатить</button>');}
-function provPaySave(pid){const amt=parseFloat(val('pp-amt'))||0;if(!amt){toast('Укажите сумму','bad');return;}
+function provPaySave(pid){const amt=parseFloat(val('pp-amt'))||0;if(!amt){toast('Укажите сумму','bad');return;}if(!guardPeriod(val('pp-per')))return;
   DB.provPayments.push({id:uid('ppay'),osiId:S.osi,providerId:pid,period:val('pp-per'),amount:amt,date:val('pp-date')});
   save();closeModal();go('providers');toast('Оплата проведена','ok');}
 
@@ -803,11 +892,14 @@ function svcForm(id){const s=id?DB.services.find(x=>x.id===id):{unit:'m2'};
     fld('Тариф, ₸*','sf-tariff',s.tariff,'45','','number')+
     '<label class="fld"><span>База начисления</span><select id="sf-unit">'+
       ['m2','apt','person'].map(u=>'<option value="'+u+'"'+(s.unit===u?' selected':'')+'>'+unitFull(u)+'</option>').join('')+
-    '</select></label></div>',
+    '</select></label>'+
+    '<label class="fld full"><span>Куда зачисляются деньги</span><select id="sf-fund">'+
+      '<option value="current"'+(svcFund(s)==='current'?' selected':'')+'>Текущий счёт — содержание дома</option>'+
+      '<option value="savings"'+(svcFund(s)==='savings'?' selected':'')+'>Сберегательный счёт — капитальный ремонт</option></select></label></div>',
     '<button class="btn gho" onclick="closeModal()">Отмена</button><button class="btn" onclick="svcSave(\''+(id||'')+'\')">'+svg(IC.check)+'Сохранить</button>');}
 function svcSave(id){const name=val('sf-name'),tariff=parseFloat(val('sf-tariff'))||0;
   if(!name){toast('Укажите наименование','bad');return;}
-  const d={name,tariff,unit:val('sf-unit'),active:true};
+  const d={name,tariff,unit:val('sf-unit'),fund:val('sf-fund')||'current',active:true};
   if(id)Object.assign(DB.services.find(x=>x.id===id),d);
   else DB.services.push({id:uid('svc'),osiId:S.osi,...d});
   save();closeModal();go('services');toast('Сохранено','ok');}
@@ -820,8 +912,37 @@ function penaltyOn(){return !!penaltyCfg().enabled;}
 function penaltyRate(){return penaltyOn()?((penaltyCfg().rate||0)/100):0;}
 function penToggle(v){penaltyCfg().enabled=!!v;save();go('settings');}
 function penRate(v){penaltyCfg().rate=parseFloat(v)||0;save();}
-function perSelectFld(id){const ps=periods();
-  return '<label class="fld"><span>Период</span><select id="'+id+'">'+ps.map(p=>'<option value="'+p+'">'+perName(p)+'</option>').join('')+'</select></label>';}
+function openPeriods(){const ps=periods().filter(p=>/^\d{4}-\d{2}$/.test(p)&&!isLocked(S.osi,p));const nx=nextPeriod();if(!ps.includes(nx)&&!isLocked(S.osi,nx))ps.unshift(nx);return ps;}
+function perSelectFld(id,sel){const ps=openPeriods();if(!sel){const cm=curMonth();if(ps.includes(cm))sel=cm;}
+  return '<label class="fld"><span>Период</span><select id="'+id+'">'+ps.map(p=>'<option value="'+p+'"'+(p===sel?' selected':'')+'>'+perName(p)+'</option>').join('')+'</select></label>';}
+/* проверка перед записью в период */
+function guardPeriod(per,osiId){if(isLocked(osiId||S.osi,per)){toast(lockedMsg(per),'bad');return false;}return true;}
+function flushSave(){return new Promise(res=>{let n=0;const t=setInterval(()=>{if((!PENDING&&!SAVING)||++n>100){clearInterval(t);res();}},150);if(PENDING&&!SAVING){clearTimeout(saveTimer);pushState();}});}
+async function periodClose(per){
+  if(!confirm('Закрыть период «'+perName(per)+'» для '+curOsi().name+'?\n\nПосле закрытия начисления, оплаты и расходы этого месяца нельзя будет изменить или удалить — только исправить корректировкой в открытом периоде. Открыть период сможет только директор, с указанием причины.'))return;
+  await flushSave();
+  try{await apiCall('/api/state/periods/close','POST',{osiId:S.osi,period:per});await pollNow();toast('Период «'+perName(per)+'» закрыт','ok');}
+  catch(e){toast(e.message||'Ошибка','bad');}
+}
+async function periodOpen(per){
+  const reason=prompt('Открыть период «'+perName(per)+'».\n\nУкажите причину — она сохранится в журнале:');
+  if(reason===null)return;
+  if(reason.trim().length<5){toast('Причина — не короче 5 символов','bad');return;}
+  await flushSave();
+  try{await apiCall('/api/state/periods/open','POST',{osiId:S.osi,period:per,reason:reason.trim()});await pollNow();toast('Период открыт','ok');}
+  catch(e){toast(e.message||'Ошибка','bad');}
+}
+async function pollNow(){try{const p=await apiCall('/api/state/since?v='+DB._v);applyPulled(p);}catch(e){}go(S.view);}
+function periodBar(per){
+  if(!/^\d{4}-\d{2}$/.test(per||''))return '';
+  const lk=(DB._locks||[]).find(l=>l.osiId===S.osi&&l.period===per);const role=S.user.role;
+  if(lk)return '<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#f4f7f7">'+
+    '<span class="pill mut">🔒 Период закрыт</span><span class="small muted">'+(lk.closedBy?esc(lk.closedBy)+' · ':'')+(lk.closedAt?new Date(lk.closedAt).toLocaleDateString('ru-RU'):'')+'</span><span style="flex:1"></span>'+
+    (role==='director'?'<button class="btn gho sm" onclick="periodOpen(\''+per+'\')">Открыть период</button>':'')+'</div>';
+  return '<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
+    '<span class="pill ok">Период открыт</span><span class="small muted">Когда месяц сверен — закройте его, чтобы данные нельзя было случайно изменить.</span><span style="flex:1"></span>'+
+    (role!=='dispatcher'?'<button class="btn sec sm" onclick="periodClose(\''+per+'\')">🔒 Закрыть период</button>':'')+'</div>';
+}
 
 /* ================= НАЧИСЛЕНИЯ ================= */
 let ACR_PER=null;
@@ -834,7 +955,9 @@ VIEWS.accruals=function(){
     '<label class="fld" style="margin-right:8px"><select onchange="acrPerChange(this.value)">'+
       ps.map(p=>'<option value="'+p+'"'+(p===ACR_PER?' selected':'')+'>'+perName(p)+'</option>').join('')+
       '<option value="__new">+ Новый период...</option></select></label>'+
-    '<button class="btn" onclick="genAccruals()">'+svg(IC.calc)+'Начислить за период</button>');
+    '<button class="btn sec" onclick="corrForm(\'accrual\')">'+svg(IC.edit)+'Корректировка</button>'+
+    (isLocked(oid,ACR_PER)?'':'<button class="btn" onclick="genAccruals()">'+svg(IC.calc)+'Начислить за период</button>'));
+  h+=periodBar(ACR_PER);
   h+='<div class="grid g4" style="margin-bottom:16px">'+
     kpi('','calc','Начислено за '+perName(ACR_PER),money(total))+
     kpi('','house','Счетов',accs.length)+
@@ -851,9 +974,10 @@ VIEWS.accruals=function(){
   h+='<div class="t-wrap"><table><thead><tr><th>Кв.</th><th>Собственник</th><th class="num">Площадь</th>'+
      svcs.map(s=>'<th class="num">'+esc(s.name.split(' ')[0])+'</th>').join('')+'<th class="num">Итого</th></tr></thead><tbody>';
   accs.slice().sort((a,b)=>(+a.apt)-(+b.apt)).forEach(a=>{let row=0;
-    let cells=svcs.map(s=>{const acr=acrs.find(x=>x.accountId===a.id&&x.serviceId===s.id);const v=acr?acr.amount:0;row+=v;return '<td class="num">'+(v?money0(v):'—')+'</td>';}).join('');
+    let cells=svcs.map(s=>{const v=acrs.filter(x=>x.accountId===a.id&&x.serviceId===s.id).reduce((t,x)=>t+x.amount,0);row+=v;return '<td class="num">'+(v?money0(v):'—')+'</td>';}).join('');
     h+='<tr><td><b>'+esc(a.apt)+'</b></td><td class="small">'+esc(a.owner)+'</td><td class="num">'+a.area+'</td>'+cells+'<td class="num" style="font-weight:700">'+money(row)+'</td></tr>';});
   h+='</tbody></table></div>';
+  h+=corrList(DB.accruals.filter(a=>a.osiId===oid&&a.kind==='correction'&&a.period===ACR_PER),'accrual');
   return h;
 };
 function acrPerChange(v){if(v==='__new'){newPeriodPrompt();go('accruals');return;}ACR_PER=v;go('accruals');}
@@ -861,8 +985,9 @@ function genAccruals(){
   const oid=S.osi,per=ACR_PER;
   const accs=osiAccounts(oid),svcs=DB.services.filter(s=>s.osiId===oid&&s.active!==false);
   if(!svcs.length){toast('Нет активных тарифов','bad');return;}
-  // remove existing for this period
-  DB.accruals=DB.accruals.filter(a=>!(a.osiId===oid&&a.period===per));
+  if(!guardPeriod(per,oid))return;
+  // пересчёт периода: плановые начисления заменяются, корректировки сохраняются
+  DB.accruals=DB.accruals.filter(a=>!(a.osiId===oid&&a.period===per&&a.kind!=='correction'));
   let n=0,tot=0;
   accs.forEach(acc=>{svcs.forEach(s=>{const base=s.unit==='m2'?acc.area:(s.unit==='person'?(acc.persons||1):1);
     const amount=Math.round(s.tariff*base);tot+=amount;n++;
@@ -873,7 +998,7 @@ function newPeriodPrompt(){
   modal('Новый расчётный период','<label class="fld"><span>Период (ГГГГ-ММ)</span><input id="np-per" placeholder="2026-07" value="'+nextPeriod()+'"></label>',
     '<button class="btn gho" onclick="closeModal()">Отмена</button><button class="btn" onclick="ACR_PER=val(\'np-per\');closeModal();genAccruals()">Создать и начислить</button>');
 }
-function nextPeriod(){const ps=periods();const last=ps[0].split('-');let y=+last[0],m=+last[1]+1;if(m>12){m=1;y++;}return y+'-'+String(m).padStart(2,'0');}
+function nextPeriod(){const ps=periods().filter(p=>/^\d{4}-\d{2}$/.test(p));if(!ps.length)return curMonth();const last=ps[0].split('-');let y=+last[0],m=+last[1]+1;if(m>12){m=1;y++;}return y+'-'+String(m).padStart(2,'0');}
 
 /* ================= ПЛАТЕЖИ ================= */
 let PAY_PER=null;
@@ -888,6 +1013,7 @@ VIEWS.payments=function(){
     '<label class="fld" style="margin-right:8px"><select onchange="PAY_PER=this.value;go(\'payments\')">'+
       '<option value="all"'+(PAY_PER==='all'?' selected':'')+'>Все периоды</option>'+
       ps.map(p=>'<option value="'+p+'"'+(p===PAY_PER?' selected':'')+'>'+perName(p)+'</option>').join('')+'</select></label>'+
+    '<button class="btn sec" onclick="corrForm(\'payment\')">'+svg(IC.edit)+'Корректировка</button>'+
     '<button class="btn" onclick="payForm()">'+svg(IC.plus)+'Принять платёж</button>');
   h+='<div class="grid g4" style="margin-bottom:16px">'+
     kpi('g','money','Поступило',money(total),pays.length+' платежей')+
@@ -896,11 +1022,15 @@ VIEWS.payments=function(){
     kpi('','wallet','Наличные',money(byMethod.cash||0))+'</div>';
   if(!pays.length)return h+emptyState('Нет платежей','Зарегистрируйте первое поступление.',
     '<button class="btn" onclick="payForm()">'+svg(IC.plus)+'Принять платёж</button>');
-  h+='<div class="t-wrap"><table><thead><tr><th>Дата</th><th>Л/С · Кв.</th><th>Собственник</th><th>Период</th><th>Способ</th><th class="num">Сумма</th></tr></thead><tbody>';
-  pays.forEach(p=>{const a=DB.accounts.find(x=>x.id===p.accountId)||{};
-    h+='<tr><td>'+esc(p.date)+'</td><td class="mono small">'+esc(a.ls||'')+' · '+esc(a.apt||'')+'</td><td>'+esc(a.owner||'')+'</td>'+
-      '<td>'+perName(p.period)+'</td><td><span class="pill info">'+methodName(p.method)+'</span></td><td class="num pos" style="font-weight:700">'+money(p.amount)+'</td></tr>';});
-  h+='</tbody><tfoot><tr><td colspan="5">ИТОГО</td><td class="num">'+money(total)+'</td></tr></tfoot></table></div>';
+  if(PAY_PER!=='all')h=h.replace('<div class="grid g4"',periodBar(PAY_PER)+'<div class="grid g4"');
+  h+='<div class="t-wrap"><table><thead><tr><th>Дата</th><th>Л/С · Кв.</th><th>Собственник</th><th>Период</th><th>Способ</th><th class="num">Сумма</th><th></th></tr></thead><tbody>';
+  pays.forEach(p=>{const a=DB.accounts.find(x=>x.id===p.accountId)||{};const lk=isLocked(oid,p.period);
+    h+='<tr><td>'+esc(p.date)+'</td><td class="mono small">'+esc(a.ls||'')+' · '+esc(a.apt||'')+'</td><td>'+esc(a.owner||'')+
+      (p.kind==='correction'?'<div class="small muted">Корректировка: '+esc(p.reason||'')+'</div>':'')+'</td>'+
+      '<td>'+perName(p.period)+(lk?' 🔒':'')+'</td><td><span class="pill '+(p.kind==='correction'?'warn':'info')+'">'+(p.kind==='correction'?'Корректировка':methodName(p.method))+'</span></td>'+
+      '<td class="num '+(p.amount<0?'neg':'pos')+'" style="font-weight:700">'+money(p.amount)+'</td>'+
+      '<td class="num">'+(lk?'':'<button class="btn gho sm" title="Удалить" onclick="payDel(\''+p.id+'\')">'+svg(IC.trash)+'</button>')+'</td></tr>';});
+  h+='</tbody><tfoot><tr><td colspan="5">ИТОГО</td><td class="num">'+money(total)+'</td><td></td></tr></tfoot></table></div>';
   return h;
 };
 function payForm(accId){
@@ -918,8 +1048,56 @@ function payForm(accId){
 }
 function paySave(){const acc=val('py-acc'),amt=parseFloat(val('py-amt'))||0;
   if(!acc||!amt){toast('Заполните счёт и сумму','bad');return;}
+  if(!guardPeriod(val('py-per')))return;
   DB.payments.push({id:uid('pay'),osiId:S.osi,accountId:acc,period:val('py-per'),amount:amt,method:val('py-method'),date:val('py-date')});
   save();closeModal();go('payments');toast('Платёж принят','ok');}
+function payDel(id){const p=DB.payments.find(x=>x.id===id);if(!p)return;
+  if(!guardPeriod(p.period,p.osiId))return;
+  const a=DB.accounts.find(x=>x.id===p.accountId)||{};
+  if(!confirm('Удалить платёж '+money(p.amount)+' от '+(a.owner||'')+' за '+perName(p.period)+'?\n\nУдалённый платёж сохранится в журнале.'))return;
+  DB.payments=DB.payments.filter(x=>x.id!==id);save();go('payments');toast('Платёж удалён','ok');}
+
+/* ================= КОРРЕКТИРОВКИ =================
+   Ошибку в закрытом периоде не исправляют задним числом: в открытом периоде
+   делается запись с плюсом или минусом, причиной и ссылкой на исходный месяц. */
+function corrForm(type){
+  const oid=S.osi,accs=osiAccounts(oid).slice().sort((a,b)=>(+a.apt)-(+b.apt));
+  const svcs=DB.services.filter(s=>s.osiId===oid);
+  const allPers=periods().filter(p=>/^\d{4}-\d{2}$/.test(p));
+  modal(type==='accrual'?'Корректировка начисления':'Корректировка оплаты',
+    '<p class="small muted" style="margin-bottom:12px">Сумма со знаком «минус» уменьшает '+(type==='accrual'?'начисление':'оплату')+', «плюс» — увеличивает. Запись попадёт в выбранный открытый период.</p>'+
+    '<div class="form-grid">'+
+    '<label class="fld full"><span>Лицевой счёт*</span><select id="cr-acc">'+accs.map(a=>'<option value="'+a.id+'">кв.'+esc(a.apt)+' · '+esc(a.owner)+'</option>').join('')+'</select></label>'+
+    (type==='accrual'?'<label class="fld full"><span>Услуга*</span><select id="cr-svc">'+svcs.map(s=>'<option value="'+s.id+'">'+esc(s.name)+'</option>').join('')+'</select></label>':'')+
+    fld('Сумма, ₸* (со знаком)','cr-amt','','-1500','','number')+
+    perSelectFld('cr-per')+
+    '<label class="fld"><span>За какой период исправление</span><select id="cr-ref"><option value="">—</option>'+allPers.map(p=>'<option value="'+p+'">'+perName(p)+(isLocked(oid,p)?' 🔒':'')+'</option>').join('')+'</select></label>'+
+    fld('Причина*','cr-reason','','Например: неверная площадь кв. 12','full')+'</div>',
+    '<button class="btn gho" onclick="closeModal()">Отмена</button><button class="btn" onclick="corrSave(\''+type+'\')">'+svg(IC.check)+'Провести</button>');
+}
+function corrSave(type){
+  const acc=val('cr-acc'),amt=parseFloat(val('cr-amt')),per=val('cr-per'),reason=val('cr-reason'),ref=val('cr-ref');
+  if(!acc||!amt){toast('Укажите счёт и сумму','bad');return;}
+  if(reason.length<5){toast('Укажите причину корректировки','bad');return;}
+  if(!guardPeriod(per))return;
+  const base={id:uid(type==='accrual'?'acr':'pay'),osiId:S.osi,accountId:acc,period:per,amount:Math.round(amt*100)/100,kind:'correction',reason:reason,refPeriod:ref||null,createdBy:S.user.login,createdAt:nowStr()};
+  if(type==='accrual'){const sv=DB.services.find(s=>s.id===val('cr-svc'))||{};DB.accruals.push(Object.assign(base,{serviceId:sv.id||null,unit:sv.unit||null}));}
+  else DB.payments.push(Object.assign(base,{method:'correction',date:today()}));
+  save();closeModal();go(type==='accrual'?'accruals':'payments');toast('Корректировка проведена','ok');
+}
+function corrList(rows,type){
+  if(!rows.length)return '';
+  let h='<div class="card" style="margin-top:16px"><h3>Корректировки за период</h3><div class="t-wrap" style="border:none;margin-top:10px"><table><thead><tr><th>Кв.</th><th>Собственник</th>'+(type==='accrual'?'<th>Услуга</th>':'')+'<th>Причина</th><th>За период</th><th>Кто</th><th class="num">Сумма</th><th></th></tr></thead><tbody>';
+  rows.forEach(r=>{const a=DB.accounts.find(x=>x.id===r.accountId)||{};const sv=DB.services.find(x=>x.id===r.serviceId)||{};const lk=isLocked(r.osiId,r.period);
+    h+='<tr><td>'+esc(a.apt||'')+'</td><td class="small">'+esc(a.owner||'')+'</td>'+(type==='accrual'?'<td class="small">'+esc(sv.name||'—')+'</td>':'')+
+      '<td class="small">'+esc(r.reason||'')+'</td><td class="small">'+(r.refPeriod?perName(r.refPeriod):'—')+'</td><td class="small muted">'+esc(r.createdBy||'')+'</td>'+
+      '<td class="num '+(r.amount<0?'neg':'pos')+'" style="font-weight:700">'+money(r.amount)+'</td>'+
+      '<td class="num">'+(lk?'':'<button class="btn gho sm" onclick="corrDel(\''+type+'\',\''+r.id+'\')">'+svg(IC.trash)+'</button>')+'</td></tr>';});
+  return h+'</tbody></table></div></div>';
+}
+function corrDel(type,id){const coll=type==='accrual'?'accruals':'payments';const r=DB[coll].find(x=>x.id===id);if(!r)return;
+  if(!guardPeriod(r.period,r.osiId))return;if(!confirm('Удалить корректировку '+money(r.amount)+'?'))return;
+  DB[coll]=DB[coll].filter(x=>x.id!==id);save();go(type==='accrual'?'accruals':'payments');}
 
 /* ================= КВИТАНЦИИ ================= */
 let RCP_ACC=null,RCP_PER=null;
@@ -993,7 +1171,7 @@ function receiptHtml(accId,per,compact){
         '<tbody>'+rows+'</tbody>'+
         '<tfoot><tr style="font-weight:800;background:#f4faf9"><td style="'+cS+'">ИТОГО</td><td style="'+cSr+'">'+money0(tOpen)+'</td><td style="'+cSr+'">'+money0(tPaid)+'</td><td style="'+cS+'"></td><td style="'+cSr+'"></td><td style="'+cSr+'"></td><td style="'+cSr+'">'+money0(tAccr)+'</td><td style="'+cSr+';color:#0f9a7d">'+money0(grand)+'</td></tr></tfoot></table>'+
       '<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:'+(compact?'6px':'14px')+'">'+
-        '<div style="font-size:'+(compact?'8px':'11.5px')+';color:#6a827a;max-width:60%">'+esc(o.bank||'')+', счёт <b>'+esc(o.iban||'—')+'</b>. В назначении укажите Л/С '+esc(a.ls)+'.<br>Оплата до 25 числа. Спасибо за своевременную оплату!</div>'+
+        '<div style="font-size:'+(compact?'8px':'11.5px')+';color:#6a827a;max-width:60%">'+esc(o.bank||'')+', счёт <b>'+esc(o.iban||'—')+'</b>'+(o.savingsIban&&DB.services.some(x=>x.osiId===o.id&&svcFund(x)==='savings')?'; взнос на капремонт — на сберегательный счёт <b>'+esc(o.savingsIban)+'</b>':'')+'. В назначении укажите Л/С '+esc(a.ls)+'.<br>Оплата до 25 числа. Спасибо за своевременную оплату!</div>'+
         '<div style="display:flex;gap:'+(compact?'8px':'14px')+'">'+
           '<div style="text-align:center"><div style="border:1px solid #eee;padding:3px;border-radius:6px">'+qrImg(o,'Kaspi')+'</div><div style="font-size:'+(compact?'8px':'11px')+';color:#6a827a;margin-top:2px">Kaspi</div></div>'+
           '<div style="text-align:center"><div style="border:1px solid #eee;padding:3px;border-radius:6px">'+qrImg(o,'Halyk')+'</div><div style="font-size:'+(compact?'8px':'11px')+';color:#6a827a;margin-top:2px">Halyk</div></div>'+
@@ -1228,30 +1406,176 @@ function reconcileProv(pid){
 }
 
 /* ================= ДОХОДЫ И РАСХОДЫ ================= */
+/* ================= ФОНДЫ, РАСХОДЫ, ДОХОДЫ =================
+   У ОСИ два счёта: текущий (содержание) и сберегательный (капремонт).
+   Услуга знает, на какой счёт идут её деньги; оплата жителя делится между
+   услугами пропорционально начислению за тот же период. */
+function svcFund(s){if(!s)return 'current';if(s.fund)return s.fund;return /капитал|капрем|накопит/i.test(s.name||'')?'savings':'current';}
+function expCats(){return (DB.expenseCategories&&DB.expenseCategories.length)?DB.expenseCategories:DEFAULT_EXP_CATS;}
+function expCatOptions(sel){const cs=expCats().slice();if(sel&&!cs.includes(sel))cs.push(sel);return cs.map(c=>'<option'+(c===sel?' selected':'')+'>'+esc(c)+'</option>').join('');}
+function fundName(f){return f==='savings'?'Сберегательный':'Текущий';}
+function fundPill(f){return '<span class="pill '+(f==='savings'?'warn':'info')+'">'+fundName(f)+'</span>';}
+/* поступления от жителей по счетам ОСИ (за период или за всё время) */
+function incomeByFund(oid,per){
+  const svcF={};DB.services.filter(s=>s.osiId===oid).forEach(s=>svcF[s.id]=svcFund(s));
+  const res={current:0,savings:0};const idx=IDX();
+  osiAccounts(oid).forEach(acc=>{const m=idx[acc.id]||{};
+    Object.keys(m).forEach(p=>{if(per&&p!==per)return;const d=m[p];if(!d.pay)return;
+      if(d.a>0){let sv=0;for(const sid in d.s)if(svcF[sid]==='savings')sv+=d.s[sid];const share=sv/d.a;res.savings+=d.pay*share;res.current+=d.pay*(1-share);}
+      else res.current+=d.pay;});});
+  return res;
+}
+/* все расходы ОСИ: собственные + оплаты поставщикам */
+function allExpenses(oid,per){
+  const rows=[];
+  (DB.expenses||[]).filter(x=>x.osiId===oid&&(!per||x.period===per)).forEach(x=>rows.push({date:x.date,period:x.period,category:x.category||'Прочие расходы',fund:x.fund||'current',amount:x.amount,payee:x.payee||'',desc:x.desc||'',src:'exp',id:x.id}));
+  DB.provPayments.filter(x=>x.osiId===oid&&(!per||x.period===per)).forEach(x=>{const pv=DB.providers.find(p=>p.id===x.providerId)||{};
+    rows.push({date:x.date,period:x.period,category:pv.category||'Содержание и уборка',fund:'current',amount:x.amount,payee:pv.name||'',desc:pv.service||'',src:'prov',id:x.id});});
+  return rows;
+}
 VIEWS.pnl=function(){
-  const oid=S.osi;const ps=periods().slice().reverse();
-  let h=head('Доходы и расходы · '+esc(curOsi().name),'Финансовый результат по периодам',
-    '<button class="btn sec" onclick="printBlock(\'pnl-print\',\'Отчёт ДиР\')">'+svg(IC.print)+'Печать / PDF</button>');
-  const totIn=DB.payments.filter(p=>p.osiId===oid).reduce((s,p)=>s+p.amount,0);
-  const totOut=DB.provPayments.filter(p=>p.osiId===oid).reduce((s,p)=>s+p.amount,0);
+  const oid=S.osi;const ps=periods().filter(p=>/^\d{4}-\d{2}$/.test(p)).slice().reverse();
+  let h=head('Доходы и расходы · '+esc(curOsi().name),'Поступления от жителей и все расходы ОСИ по статьям',
+    '<button class="btn sec" onclick="printBlock(\'pnl-print\',\'Доходы и расходы\')">'+svg(IC.print)+'Печать / PDF</button>');
+  const inc=incomeByFund(oid),exp=allExpenses(oid);
+  const totIn=inc.current+inc.savings,totOut=exp.reduce((s,x)=>s+x.amount,0);
+  const outF={current:0,savings:0};exp.forEach(x=>outF[x.fund==='savings'?'savings':'current']+=x.amount);
   h+='<div class="grid g3" style="margin-bottom:16px">'+
-    kpi('g','money','Доходы (собрано)',money(totIn))+
-    kpi('r','wallet','Расходы (поставщикам)',money(totOut))+
+    kpi('g','money','Поступило от жителей',money(totIn))+
+    kpi('r','wallet','Израсходовано',money(totOut))+
     kpi(totIn-totOut>=0?'g':'r','chart','Результат',money(totIn-totOut),totIn-totOut>=0?'профицит':'дефицит')+'</div>';
-  h+='<div id="pnl-print"><div class="grid g2">';
-  // by period
+  h+='<div id="pnl-print">';
+  h+='<div class="card" style="margin-bottom:16px"><h3>По счетам ОСИ</h3><div class="t-wrap" style="border:none;margin-top:10px"><table><thead><tr><th>Счёт</th><th class="num">Поступило</th><th class="num">Израсходовано</th><th class="num">Расчётный остаток</th></tr></thead><tbody>'+
+    ['current','savings'].map(f=>'<tr><td>'+fundPill(f)+' '+(f==='savings'?'капитальный ремонт':'содержание дома')+'</td><td class="num pos">'+money(inc[f])+'</td><td class="num neg">'+money(outF[f])+'</td><td class="num" style="font-weight:700">'+money(inc[f]-outF[f])+'</td></tr>').join('')+
+    '</tbody></table></div><p class="small muted" style="margin-top:8px">Остаток рассчитан по данным системы. Для сверки сравните его с выпиской банка на ту же дату.</p></div>';
+  h+='<div class="grid g2">';
   h+='<div class="card"><h3>По периодам</h3><div class="t-wrap" style="border:none;margin-top:10px"><table><thead><tr><th>Период</th><th class="num">Доходы</th><th class="num">Расходы</th><th class="num">Результат</th></tr></thead><tbody>';
-  ps.forEach(p=>{const inc=DB.payments.filter(x=>x.osiId===oid&&x.period===p).reduce((s,x)=>s+x.amount,0);
-    const exp=DB.provPayments.filter(x=>x.osiId===oid&&x.period===p).reduce((s,x)=>s+x.amount,0);
-    h+='<tr><td>'+perName(p)+'</td><td class="num pos">'+money(inc)+'</td><td class="num neg">'+money(exp)+'</td><td class="num '+(inc-exp>=0?'pos':'neg')+'" style="font-weight:700">'+money(inc-exp)+'</td></tr>';});
+  ps.forEach(p=>{const i=incomeByFund(oid,p);const ii=i.current+i.savings;const ee=allExpenses(oid,p).reduce((s,x)=>s+x.amount,0);
+    h+='<tr><td>'+perName(p)+(isLocked(oid,p)?' 🔒':'')+'</td><td class="num pos">'+money(ii)+'</td><td class="num neg">'+money(ee)+'</td><td class="num '+(ii-ee>=0?'pos':'neg')+'" style="font-weight:700">'+money(ii-ee)+'</td></tr>';});
   h+='</tbody><tfoot><tr><td>ИТОГО</td><td class="num">'+money(totIn)+'</td><td class="num">'+money(totOut)+'</td><td class="num">'+money(totIn-totOut)+'</td></tr></tfoot></table></div></div>';
-  // expenses by provider
-  h+='<div class="card"><h3>Расходы по поставщикам</h3><div class="t-wrap" style="border:none;margin-top:10px"><table><thead><tr><th>Поставщик</th><th>Услуга</th><th class="num">Оплачено</th></tr></thead><tbody>';
-  DB.providers.filter(p=>p.osiId===oid).forEach(p=>{const paid=DB.provPayments.filter(x=>x.providerId===p.id).reduce((s,x)=>s+x.amount,0);
-    h+='<tr><td class="small">'+esc(p.name)+'</td><td class="small">'+esc(p.service)+'</td><td class="num">'+money(paid)+'</td></tr>';});
+  const byCat={};exp.forEach(x=>byCat[x.category]=(byCat[x.category]||0)+x.amount);
+  h+='<div class="card"><h3>Расходы по статьям</h3><div class="t-wrap" style="border:none;margin-top:10px"><table><thead><tr><th>Статья</th><th class="num">Сумма</th><th class="num">Доля</th></tr></thead><tbody>';
+  Object.keys(byCat).sort((a,b)=>byCat[b]-byCat[a]).forEach(c=>{h+='<tr><td class="small">'+esc(c)+'</td><td class="num">'+money(byCat[c])+'</td><td class="num small muted">'+(totOut?Math.round(byCat[c]/totOut*100):0)+'%</td></tr>';});
+  if(!Object.keys(byCat).length)h+='<tr><td colspan="3" class="small muted">Расходов пока нет</td></tr>';
   h+='</tbody></table></div></div></div></div>';
   return h;
 };
+
+/* ================= РАСХОДЫ ================= */
+let EXP_PER='all',EXP_FUND='all';
+VIEWS.expenses=function(){
+  const oid=S.osi;const ps=periods().filter(p=>/^\d{4}-\d{2}$/.test(p));
+  let rows=(DB.expenses||[]).filter(x=>x.osiId===oid);
+  if(EXP_PER!=='all')rows=rows.filter(x=>x.period===EXP_PER);
+  if(EXP_FUND!=='all')rows=rows.filter(x=>(x.fund||'current')===EXP_FUND);
+  rows=rows.slice().sort((a,b)=>a.date<b.date?1:-1);
+  const tot=rows.reduce((s,x)=>s+x.amount,0);
+  const provTot=DB.provPayments.filter(x=>x.osiId===oid&&(EXP_PER==='all'||x.period===EXP_PER)).reduce((s,x)=>s+x.amount,0);
+  let h=head('Расходы · '+esc(curOsi().name),'Зарплата, налоги, ремонт, хозрасходы и всё, что оплачено не поставщикам',
+    '<label class="fld" style="margin-right:8px"><select onchange="EXP_PER=this.value;go(\'expenses\')"><option value="all">Все периоды</option>'+
+      ps.map(p=>'<option value="'+p+'"'+(p===EXP_PER?' selected':'')+'>'+perName(p)+'</option>').join('')+'</select></label>'+
+    '<label class="fld" style="margin-right:8px"><select onchange="EXP_FUND=this.value;go(\'expenses\')"><option value="all">Оба счёта</option><option value="current"'+(EXP_FUND==='current'?' selected':'')+'>Текущий</option><option value="savings"'+(EXP_FUND==='savings'?' selected':'')+'>Сберегательный</option></select></label>'+
+    '<button class="btn sec" onclick="expCatForm()">Статьи</button>'+
+    '<button class="btn" onclick="expForm()">'+svg(IC.plus)+'Добавить расход</button>');
+  if(EXP_PER!=='all')h+=periodBar(EXP_PER);
+  h+='<div class="grid g3" style="margin-bottom:16px">'+
+    kpi('r','wallet','Расходы в списке',money(tot),rows.length+' записей')+
+    kpi('','truck','Оплачено поставщикам',money(provTot),'учтено в разделе «Поставщики»')+
+    kpi('','chart','Всего расходов',money(tot+(EXP_FUND==='savings'?0:provTot)))+'</div>';
+  if(!rows.length)return h+emptyState('Расходов нет','Добавьте зарплату, налоги, оплату ремонта или хозрасходы.','<button class="btn" onclick="expForm()">'+svg(IC.plus)+'Добавить расход</button>');
+  h+='<div class="t-wrap"><table><thead><tr><th>Дата</th><th>Статья</th><th>Получатель · описание</th><th>Счёт</th><th>Период</th><th class="num">Сумма</th><th></th></tr></thead><tbody>';
+  rows.forEach(x=>{const lk=isLocked(oid,x.period);
+    h+='<tr><td>'+esc(x.date||'')+'</td><td class="small"><b>'+esc(x.category||'')+'</b></td><td class="small">'+esc(x.payee||'')+(x.desc?'<div class="muted">'+esc(x.desc)+'</div>':'')+(x.docNo?'<div class="muted">Док. № '+esc(x.docNo)+'</div>':'')+'</td>'+
+      '<td>'+fundPill(x.fund||'current')+'</td><td>'+perName(x.period)+(lk?' 🔒':'')+'</td><td class="num neg" style="font-weight:700">'+money(x.amount)+'</td>'+
+      '<td class="num">'+(lk?'':'<button class="btn gho sm" onclick="expForm(\''+x.id+'\')">'+svg(IC.edit)+'</button><button class="btn gho sm" onclick="expDel(\''+x.id+'\')">'+svg(IC.trash)+'</button>')+'</td></tr>';});
+  h+='</tbody><tfoot><tr><td colspan="5">ИТОГО</td><td class="num">'+money(tot)+'</td><td></td></tr></tfoot></table></div>';
+  return h;
+};
+function expForm(id){
+  const x=id?(DB.expenses||[]).find(e=>e.id===id):{fund:'current',date:today()};
+  if(id&&!guardPeriod(x.period,x.osiId))return;
+  modal(id?'Редактировать расход':'Новый расход','<div class="form-grid">'+
+    '<label class="fld full"><span>Статья*</span><select id="ex-cat">'+expCatOptions(x.category||expCats()[0])+'</select></label>'+
+    fld('Сумма, ₸*','ex-amt',x.amount||'','25000','','number')+fld('Дата*','ex-date',x.date||today(),'')+
+    perSelectFld('ex-per',x.period)+
+    '<label class="fld"><span>Со счёта</span><select id="ex-fund"><option value="current"'+(x.fund!=='savings'?' selected':'')+'>Текущий (содержание)</option><option value="savings"'+(x.fund==='savings'?' selected':'')+'>Сберегательный (капремонт)</option></select></label>'+
+    fld('Получатель','ex-payee',x.payee||'','ФИО или организация','full')+
+    fld('Описание','ex-desc',x.desc||'','За что','full')+
+    fld('№ документа','ex-doc',x.docNo||'','')+'</div>'+
+    '<p class="small muted" style="margin-top:10px">Расходы на капитальный ремонт со сберегательного счёта проводятся только по решению собрания собственников.</p>',
+    '<button class="btn gho" onclick="closeModal()">Отмена</button><button class="btn" onclick="expSave(\''+(id||'')+'\')">'+svg(IC.check)+'Сохранить</button>');
+}
+function expSave(id){
+  const amt=parseFloat(val('ex-amt'))||0,per=val('ex-per'),fund=val('ex-fund');
+  if(amt<=0){toast('Укажите сумму','bad');return;}
+  if(!val('ex-date')){toast('Укажите дату','bad');return;}
+  if(!guardPeriod(per))return;
+  if(fund==='savings'&&!id&&!confirm('Расход со сберегательного счёта (капремонт). Решение собрания собственников есть?'))return;
+  const d={category:val('ex-cat'),amount:Math.round(amt*100)/100,date:val('ex-date'),period:per,fund:fund,payee:val('ex-payee'),desc:val('ex-desc'),docNo:val('ex-doc')};
+  if(id){const x=DB.expenses.find(e=>e.id===id);if(!guardPeriod(x.period,x.osiId))return;Object.assign(x,d);}
+  else DB.expenses.push(Object.assign({id:uid('exp'),osiId:S.osi,createdBy:S.user.login,createdAt:nowStr()},d));
+  save();closeModal();go('expenses');toast('Сохранено','ok');
+}
+function expDel(id){const x=DB.expenses.find(e=>e.id===id);if(!x)return;if(!guardPeriod(x.period,x.osiId))return;
+  if(!confirm('Удалить расход '+money(x.amount)+' («'+x.category+'»)?'))return;
+  DB.expenses=DB.expenses.filter(e=>e.id!==id);save();go('expenses');toast('Удалено','ok');}
+function expCatForm(){
+  modal('Статьи расходов','<p class="small muted" style="margin-bottom:10px">Одна статья — одна строка. Статьи используются в расходах, у поставщиков и в отчёте о доходах и расходах.</p>'+
+    '<label class="fld full"><textarea id="ec-list" rows="12" style="width:100%;font:inherit;padding:10px;border:1px solid var(--line2);border-radius:8px">'+esc(expCats().join('\n'))+'</textarea></label>',
+    '<button class="btn gho" onclick="closeModal()">Отмена</button><button class="btn" onclick="expCatSave()">Сохранить</button>');
+}
+function expCatSave(){const list=[...new Set(val('ec-list').split('\n').map(x=>x.trim()).filter(Boolean))];
+  if(!list.length){toast('Нужна хотя бы одна статья','bad');return;}
+  DB.expenseCategories=list;save();closeModal();go('expenses');toast('Статьи сохранены','ok');}
+
+/* ================= КАПРЕМОНТ ================= */
+function capitalRows(oid){
+  const sv=DB.services.filter(s=>s.osiId===oid&&svcFund(s)==='savings').map(s=>s.id);const idx=IDX();
+  return osiAccounts(oid).map(acc=>{let ac=0,pay=0;const m=idx[acc.id]||{};
+    Object.keys(m).forEach(p=>{const d=m[p];let a=0;sv.forEach(id=>a+=d.s[id]||0);ac+=a;if(d.a>0)pay+=d.pay*a/d.a;});
+    let open=0;if(acc.saldoBySvc)sv.forEach(id=>open+=acc.saldoBySvc[id]||0);
+    return {acc,accrued:ac,paid:pay,open:open,debt:open+ac-pay};});
+}
+VIEWS.capital=function(){
+  const oid=S.osi,o=curOsi();const sv=DB.services.filter(s=>s.osiId===oid&&svcFund(s)==='savings');
+  let h=head('Капремонт · '+esc(o.name),'Накопления на капитальный ремонт — сберегательный счёт ОСИ',
+    '<button class="btn sec" onclick="printBlock(\'cap-print\',\'Накопления на капремонт\')">'+svg(IC.print)+'Печать / PDF</button>');
+  if(!sv.length)return h+emptyState('Нет услуги капремонта','Создайте услугу «Взнос на капитальный ремонт» и в поле «Куда зачисляются деньги» выберите сберегательный счёт.','<button class="btn" onclick="go(\'services\')">К услугам</button>');
+  const rows=capitalRows(oid);const spent=(DB.expenses||[]).filter(x=>x.osiId===oid&&x.fund==='savings').reduce((s,x)=>s+x.amount,0);
+  const T=rows.reduce((t,r)=>({accrued:t.accrued+r.accrued,paid:t.paid+r.paid,debt:t.debt+r.debt}),{accrued:0,paid:0,debt:0});
+  h+='<div class="grid g4" style="margin-bottom:16px">'+
+    kpi('','calc','Начислено взносов',money(T.accrued))+kpi('g','money','Собрано',money(T.paid))+
+    kpi('r','wallet','Израсходовано',money(spent))+kpi('g','chart','Накоплено',money(T.paid-spent),'расчётный остаток')+'</div>';
+  h+='<div class="card" style="margin-bottom:16px"><div class="small muted">Сберегательный счёт: <b>'+esc(o.savingsIban||'не указан')+'</b>'+(o.savingsBank?' · '+esc(o.savingsBank):'')+
+    (o.savingsIban?'':' — <a href="#" onclick="osiForm(\''+oid+'\');return false">указать в карточке ОСИ</a>')+
+    '<br>Услуги на сберегательный счёт: '+sv.map(s=>esc(s.name)).join(', ')+'</div></div>';
+  h+='<div id="cap-print"><div class="t-wrap"><table><thead><tr><th>Кв.</th><th>Собственник</th><th class="num">Площадь</th><th class="num">Начислено</th><th class="num">Оплачено</th><th class="num">Долг</th><th></th></tr></thead><tbody>';
+  rows.sort((a,b)=>(+a.acc.apt)-(+b.acc.apt)).forEach(r=>{
+    h+='<tr><td><b>'+esc(r.acc.apt)+'</b></td><td class="small">'+esc(r.acc.owner||'')+'</td><td class="num">'+(r.acc.area||'')+'</td><td class="num">'+money(r.accrued)+'</td><td class="num pos">'+money(r.paid)+'</td>'+
+      '<td class="num '+(r.debt>0.5?'neg':'')+'">'+money(r.debt)+'</td><td class="num"><button class="btn gho sm" onclick="capCert(\''+r.acc.id+'\')">Справка</button></td></tr>';});
+  h+='</tbody><tfoot><tr><td colspan="3">ИТОГО</td><td class="num">'+money(T.accrued)+'</td><td class="num">'+money(T.paid)+'</td><td class="num">'+money(T.debt)+'</td><td></td></tr></tfoot></table></div></div>';
+  return h;
+};
+/* справка о накоплениях по квартире — председатель обязан выдать её собственнику по запросу */
+function capCert(accId){
+  const r=capitalRows(S.osi).find(x=>x.acc.id===accId);if(!r)return;const o=curOsi();const a=r.acc;
+  const ps=Object.keys(accM(accId)).filter(p=>/^\d{4}-\d{2}$/.test(p)).sort();
+  const w=window.open('','_blank');
+  w.document.write('<html><head><meta charset="utf-8"><title>Справка о накоплениях</title><style>body{font-family:Arial,sans-serif;padding:40px;color:#111;max-width:720px;margin:auto;font-size:14px;line-height:1.5}h2{text-align:center;font-size:17px;margin:24px 0}table{width:100%;border-collapse:collapse;margin:16px 0}td{border:1px solid #bbb;padding:8px 10px}td.n{text-align:right;white-space:nowrap}.sig{margin-top:48px;display:flex;justify-content:space-between}</style></head><body>'+
+    '<div>'+esc(o.name)+(o.bin?'<br>БИН '+esc(o.bin):'')+'<br>'+esc(o.address||'')+'</div>'+
+    '<h2>СПРАВКА<br>о накоплениях на капитальный ремонт общего имущества</h2>'+
+    '<p>Выдана собственнику помещения: <b>'+esc(a.owner||'')+'</b>, квартира № '+esc(a.apt)+(a.area?', полезная площадь '+a.area+' м²':'')+', лицевой счёт '+esc(a.ls||'')+'.</p>'+
+    '<table><tr><td>Период учёта</td><td class="n">'+(ps.length?perName(ps[0])+' — '+perName(ps[ps.length-1]):'—')+'</td></tr>'+
+    (r.open?'<tr><td>Входящий остаток долга</td><td class="n">'+money(r.open)+'</td></tr>':'')+
+    '<tr><td>Начислено взносов на капитальный ремонт</td><td class="n">'+money(r.accrued)+'</td></tr>'+
+    '<tr><td>Оплачено (накоплено по квартире)</td><td class="n"><b>'+money(r.paid)+'</b></td></tr>'+
+    '<tr><td>Задолженность по взносам</td><td class="n">'+money(Math.max(0,r.debt))+'</td></tr></table>'+
+    '<p>Средства накапливаются на сберегательном счёте объединения'+(o.savingsIban?' '+esc(o.savingsIban)+(o.savingsBank?' в '+esc(o.savingsBank):''):'')+'.</p>'+
+    '<p>Дата выдачи: '+new Date().toLocaleDateString('ru-RU')+'</p>'+
+    '<div class="sig"><span>Председатель ОСИ</span><span>_____________ / '+esc(o.chairman||'')+' /</span></div></body></html>');
+  w.document.close();setTimeout(()=>w.print(),300);
+}
+
 function printBlock(id,title){
   const el=document.getElementById(id);if(!el)return;
   const w=window.open('','_blank');
@@ -1725,7 +2049,9 @@ function exportAccountsCsv(){
 function importDB(inp){const f=inp.files[0];if(!f)return;const r=new FileReader();
   r.onload=e=>{try{const inc=JSON.parse(e.target.result);if(!Array.isArray(inc.osi))throw 0;
     if(!confirm('Загрузка резервной копии ЗАМЕНИТ все текущие данные (сотрудники сохранятся). Продолжить?'))return;
-    inc._v=DB._v;inc.users=DB.users;DB=inc;save();S.osi=DB.osi[0]?DB.osi[0].id:null;renderOsiPicker();go('dashboard');toast('Данные импортированы','ok');}catch(x){toast('Ошибка файла','bad');}};r.readAsText(f);}
+    delete inc.users;delete inc._v;delete inc._locks;
+    apiCall('/api/state/replace','POST',{data:inc}).then(async()=>{await loadServerState();S.osi=DB.osi[0]?DB.osi[0].id:null;boot();toast('Резервная копия загружена','ok');})
+      .catch(err=>toast('Не удалось загрузить: '+(err.message||'ошибка'),'bad'));}catch(x){toast('Ошибка файла','bad');}};r.readAsText(f);}
 function dedupAccounts(){
   const groups={};
   DB.accounts.forEach(a=>{const k=a.osiId+'|'+String(a.apt).trim();(groups[k]=groups[k]||[]).push(a);});

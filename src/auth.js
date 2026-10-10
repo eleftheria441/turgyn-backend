@@ -43,7 +43,8 @@ function requireStaff(roles) {
       const token = tokenFromReq(req);
       const sess = await getSession(token);
       if (!sess || sess.type !== 'staff') return res.status(401).json({ error: 'Требуется вход в систему' });
-      const user = (await store.getUsers()).find(u => u.id === sess.userId);
+      const row = await store.getUserById(sess.userId);
+      const user = row && { id: row.id, login: row.login, name: row.name, role: row.role, pos: row.pos, passHash: row.pass_hash, mustChangePassword: row.must_change, disabled: row.disabled };
       if (!user || user.disabled) return res.status(401).json({ error: 'Учётная запись недоступна' });
       if (roles && !roles.includes(user.role)) return res.status(403).json({ error: 'Недостаточно прав' });
       req.session = sess; req.token = token; req.user = user;

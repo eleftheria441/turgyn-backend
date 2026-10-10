@@ -1,6 +1,7 @@
 const { hashPassword } = require('./auth');
 
-function uid(p) { return (p || 'id') + '_' + Math.random().toString(36).slice(2, 9); }
+const crypto = require('crypto');
+function uid(p) { return (p || 'id') + '_' + crypto.randomBytes(9).toString('base64url'); }
 function rnd(a, b) { return Math.floor(a + Math.random() * (b - a + 1)); }
 const FNAMES = ['Асан','Айгерим','Данияр','Гульнара','Тимур','Сауле','Ерлан','Мадина','Бекзат','Алия','Нурлан','Жанна'];
 const LNAMES = ['Ахметов','Оспанова','Ким','Сулейменов','Нурланова','Ибраев','Смагулова','Тлеубаев','Джандосов','Каримова'];
@@ -81,6 +82,12 @@ function buildSeed() {
   return db;
 }
 
+const DEFAULT_EXPENSE_CATEGORIES = [
+  'Заработная плата', 'Налоги и отчисления с зарплаты', 'Содержание и уборка', 'Вывоз ТБО',
+  'Коммунальные услуги на общедомовые нужды', 'Текущий ремонт', 'Капитальный ремонт',
+  'Обслуживание лифтов', 'Банковские услуги и комиссии', 'Хозяйственные расходы', 'Прочие расходы'
+];
+
 /* Пустая рабочая база: без демо-домов, с одним директором. */
 function buildEmpty(admin) {
   return {
@@ -88,8 +95,9 @@ function buildEmpty(admin) {
     subscription: { plan: 'uk', pricePerAccount: 35, since: new Date().toISOString().slice(0, 10), status: 'active' },
     users: [{ id: 'u1', name: admin.name || 'Директор', login: admin.login, passHash: hashPassword(admin.password), role: 'director', pos: 'Директор УК', mustChangePassword: !!admin.mustChange }],
     osi: [], houses: [], accounts: [], services: [], accruals: [], payments: [],
-    providers: [], provInvoices: [], provPayments: [], requests: [], importLog: [], penalty: { enabled: false, rate: 0.05 }
+    providers: [], provInvoices: [], provPayments: [], requests: [], expenses: [], importLog: [], penalty: { enabled: false, rate: 0.05 },
+    expenseCategories: DEFAULT_EXPENSE_CATEGORIES
   };
 }
 
-module.exports = { buildSeed, buildEmpty, uid };
+module.exports = { buildSeed, buildEmpty, uid, DEFAULT_EXPENSE_CATEGORIES };

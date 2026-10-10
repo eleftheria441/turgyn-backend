@@ -50,21 +50,28 @@ app.use((err, req, res, next) => {
 
 async function bootstrap() {
   await store.init();
-  if (!(await store.dbExists())) {
+  if (!(await store.hasUsers())) {
+    let db;
     if (process.env.SEED_DEMO === 'true') {
       console.log('База пуста — создаю ДЕМО-данные (SEED_DEMO=true).');
-      await store.saveDB(buildSeed(), null, 'system');
+      db = buildSeed();
     } else {
       const login = process.env.ADMIN_LOGIN || 'director';
       let password = process.env.ADMIN_PASSWORD;
       let generated = false;
       if (!password) { password = auth.randomPassword(); generated = true; }
-      await store.saveDB(buildEmpty({ login, password, name: process.env.ADMIN_NAME, mustChange: generated }), null, 'system');
+      db = buildEmpty({ login, password, name: process.env.ADMIN_NAME, mustChange: generated });
       console.log('База пуста — создана рабочая база с одним директором. Логин: ' + login);
       if (generated) console.log('Временный пароль директора (смените при первом входе): ' + password);
     }
+    const users = db.users.map(u => ({ id: u.id, login: u.login, name: u.name, role: u.role, pos: u.pos, passHash: u.passHash, mustChange: !!u.mustChangePassword }));
+    delete db.users;
+    await store.replaceAll(db, 'system', users);
     await store.audit('system', 'db_initialized', null);
   }
+  const keep = parseInt(process.env.SNAPSHOT_KEEP || '168', 10);
+  const every = parseInt(process.env.SNAPSHOT_MINUTES || '60', 10) * 60000;
+  setInterval(() => store.snapshotIfChanged(keep).catch(e => console.error('snapshot', e.message)), every).unref();
   setInterval(() => store.cleanup().catch(e => console.error('cleanup', e.message)), 60 * 60 * 1000).unref();
   app.listen(PORT, () => console.log('Turgyn backend запущен на порту ' + PORT));
 }
