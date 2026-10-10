@@ -56,19 +56,22 @@ function connBadge(){
 function buildIdx(){const idx={};
   (DB.accruals||[]).forEach(x=>{const m=idx[x.accountId]=idx[x.accountId]||{};const p=m[x.period]=m[x.period]||{a:0,pay:0,s:{}};
     p.a+=x.amount;const sid=x.serviceId||'';p.s[sid]=(p.s[sid]||0)+x.amount;});
-  (DB.payments||[]).forEach(x=>{const m=idx[x.accountId]=idx[x.accountId]||{};const p=m[x.period]=m[x.period]||{a:0,pay:0,s:{}};p.pay+=x.amount;});
+  (DB.payments||[]).forEach(x=>{const m=idx[x.accountId]=idx[x.accountId]||{};const p=m[x.period]=m[x.period]||{a:0,pay:0,s:{}};p.pay+=x.amount;
+    if(x.serviceId){p.ps=p.ps||{};p.ps[x.serviceId]=(p.ps[x.serviceId]||0)+x.amount;}else p.pu=(p.pu||0)+x.amount;});
   _IDX=idx;return idx;}
 function IDX(){return _IDX||buildIdx();}
 function accM(accId){return IDX()[accId]||{};}
 /* данные по услуге за период: начислено и оплачено (доля) */
-function svcPer(accId,svcId,per){const d=accM(accId)[per];if(!d)return{ac:0,pay:0};const ac=d.s[svcId]||0;const pay=d.a>0?d.pay*ac/d.a:0;return{ac:ac,pay:pay};}
+/* оплата услуги за период: точная (если в оплате указана услуга) + доля неразнесённой оплаты */
+function payOf(d,svcId){if(!d)return 0;const ac=d.s[svcId]||0;return ((d.ps&&d.ps[svcId])||0)+(d.a>0?(d.pu||0)*ac/d.a:0);}
+function svcPer(accId,svcId,per){const d=accM(accId)[per];if(!d)return{ac:0,pay:0};const ac=d.s[svcId]||0;return{ac:ac,pay:payOf(d,svcId)};}
 /* входящее сальдо по услугам (из импорта долга) и общее */
 function accSvcOpen(a){if(!a||!a.saldoBySvc)return 0;let s=0;for(const k in a.saldoBySvc)s+=a.saldoBySvc[k];return s;}
 function accOpen(a){return (a?(a.saldoStart||0):0)+accSvcOpen(a);}
 /* сальдо по услуге до периода (или всё, если per пуст) */
 function svcBal(accId,svcId,per){const a=DB.accounts.find(x=>x.id===accId)||{};
   let b=(a.saldoBySvc&&a.saldoBySvc[svcId])||0;
-  const m=accM(accId);for(const p in m){if(per&&!(p<per))continue;const d=m[p];const ac=d.s[svcId]||0;b+=ac-(d.a>0?d.pay*ac/d.a:0);}return b;}
+  const m=accM(accId);for(const p in m){if(per&&!(p<per))continue;const d=m[p];const ac=d.s[svcId]||0;b+=ac-payOf(d,svcId);}return b;}
 /* ================= СИНХРОНИЗАЦИЯ С СЕРВЕРОМ =================
    На сервер уходят только изменённые записи. SYNC хранит то, что сервер уже знает,
    — по нему вычисляется разница. Правки коллег приходят в ответе на сохранение
@@ -346,6 +349,7 @@ const NAV=[
   {v:'ai',t:'AI-аналитик',ic:'ai',roles:['director','accountant']},
   {g:'Управление'},
   {v:'requests',t:'Заявки жителей',ic:'bell',roles:['director','accountant','dispatcher']},
+  {v:'import1c',t:'Импорт из 1С',ic:'doc',roles:['director','accountant']},
   {v:'employees',t:'Сотрудники УК',ic:'users',roles:['director']},
   {v:'leads',t:'Заявки с сайта',ic:'doc',roles:['director']},
   {v:'settings',t:'Настройки',ic:'gear',roles:['director']}
@@ -359,7 +363,7 @@ const KZ={
   v:{dashboard:'Басты бет',osi:'ОСИ (клиенттер)',accounts:'Жеке шоттар',providers:'Қызмет жеткізушілер',
     services:'Қызметтер мен тарифтер',accruals:'Есептеулер',payments:'Төлемдер (қабылдау)',receipts:'Түбіртектер',registers:'Тізілімдер',
     balance:'Айналым-сальдо',reconcile:'Салыстыру актілері',expenses:'Шығыстар',capital:'Күрделі жөндеу',pnl:'Кірістер мен шығыстар',
-    legal:'Хаттамалар мен өндіріп алу',ai:'AI-аналитик',requests:'Тұрғын өтінімдері',employees:'БК қызметкерлері',
+    legal:'Хаттамалар мен өндіріп алу',ai:'AI-аналитик',import1c:'1С-тен импорт',requests:'Тұрғын өтінімдері',employees:'БК қызметкерлері',
     leads:'Сайттан өтінімдер',settings:'Баптаулар'}
 };
 function navT(item){return (ALANG==='kz'&&item&&item.v&&KZ.v[item.v])?KZ.v[item.v]:(item?item.t:'');}
@@ -552,7 +556,7 @@ function go(v){
   document.querySelectorAll('.nav-item').forEach(e=>e.classList.toggle('active',e.dataset.v===v));
   const meta=NAV.find(n=>n.v===v)||{t:'Дашборд'};
   document.getElementById('pg-title').textContent=navT(meta);
-  document.getElementById('pg-path').textContent=DB.org.name+(curOsi()&&v!=='osi'&&v!=='dashboard'&&v!=='employees'&&v!=='leads'&&v!=='settings'?' · '+curOsi().name:'');
+  document.getElementById('pg-path').textContent=DB.org.name+(curOsi()&&v!=='osi'&&v!=='dashboard'&&v!=='employees'&&v!=='leads'&&v!=='settings'&&v!=='import1c'?' · '+curOsi().name:'');
   const need=['accounts','providers','services','accruals','payments','receipts','registers','balance','reconcile','pnl','requests','legal','expenses','capital'];
   if(need.includes(v)&&!curOsi()){
     document.getElementById('view').innerHTML=emptyState('Нет выбранного ОСИ','Сначала добавьте клиента (ОСИ) в разделе «ОСИ (клиенты)».',
@@ -983,8 +987,8 @@ VIEWS.accruals=function(){
 function acrPerChange(v){if(v==='__new'){newPeriodPrompt();go('accruals');return;}ACR_PER=v;go('accruals');}
 function genAccruals(){
   const oid=S.osi,per=ACR_PER;
-  const accs=osiAccounts(oid),svcs=DB.services.filter(s=>s.osiId===oid&&s.active!==false);
-  if(!svcs.length){toast('Нет активных тарифов','bad');return;}
+  const accs=osiAccounts(oid),svcs=DB.services.filter(s=>s.osiId===oid&&s.active!==false&&(+s.tariff||0)>0);
+  if(!svcs.length){toast('Нет услуг с тарифом — укажите тариф в «Услугах и тарифах»','bad');return;}
   if(!guardPeriod(per,oid))return;
   // пересчёт периода: плановые начисления заменяются, корректировки сохраняются
   DB.accruals=DB.accruals.filter(a=>!(a.osiId===oid&&a.period===per&&a.kind!=='correction'));
@@ -1421,8 +1425,9 @@ function incomeByFund(oid,per){
   const res={current:0,savings:0};const idx=IDX();
   osiAccounts(oid).forEach(acc=>{const m=idx[acc.id]||{};
     Object.keys(m).forEach(p=>{if(per&&p!==per)return;const d=m[p];if(!d.pay)return;
-      if(d.a>0){let sv=0;for(const sid in d.s)if(svcF[sid]==='savings')sv+=d.s[sid];const share=sv/d.a;res.savings+=d.pay*share;res.current+=d.pay*(1-share);}
-      else res.current+=d.pay;});});
+      let sv=0;if(d.ps)for(const sid in d.ps)if(svcF[sid]==='savings')sv+=d.ps[sid];
+      const pu=d.pu||0;if(d.a>0){let sa=0;for(const sid in d.s)if(svcF[sid]==='savings')sa+=d.s[sid];sv+=pu*sa/d.a;}
+      res.savings+=sv;res.current+=d.pay-sv;});});
   return res;
 }
 /* все расходы ОСИ: собственные + оплаты поставщикам */
@@ -1532,7 +1537,7 @@ function expCatSave(){const list=[...new Set(val('ec-list').split('\n').map(x=>x
 function capitalRows(oid){
   const sv=DB.services.filter(s=>s.osiId===oid&&svcFund(s)==='savings').map(s=>s.id);const idx=IDX();
   return osiAccounts(oid).map(acc=>{let ac=0,pay=0;const m=idx[acc.id]||{};
-    Object.keys(m).forEach(p=>{const d=m[p];let a=0;sv.forEach(id=>a+=d.s[id]||0);ac+=a;if(d.a>0)pay+=d.pay*a/d.a;});
+    Object.keys(m).forEach(p=>{const d=m[p];let a=0;sv.forEach(id=>{a+=d.s[id]||0;pay+=payOf(d,id);});ac+=a;});
     let open=0;if(acc.saldoBySvc)sv.forEach(id=>open+=acc.saldoBySvc[id]||0);
     return {acc,accrued:ac,paid:pay,open:open,debt:open+ac-pay};});
 }
@@ -2459,6 +2464,337 @@ function importHist1c(input){const f=input.files[0];if(!f)return;
     toast(perName(per)+': квартир '+nAcc+' (новых '+nNew+'), начислено '+money(sumAcc)+', оплачено '+money(sumPay),'ok');
   }catch(x){toast('Ошибка: '+x.message,'bad');}};
   r.readAsText(f,'utf-8');input.value='';}
+
+
+/* ================= ИМПОРТ ИСТОРИИ ИЗ 1С =================
+   Источники: «Карточка счёта» (операции с датами) и «Анализ субконто» (сальдо по квартирам)
+   по счёту расчётов с жильцами (у ОСИ на HAUSMANAGER — 1274), сохранённые из 1С в .xlsx.
+   Порядок: разбор → предпросмотр со сверкой сальдо → загрузка одним пакетом → откат пакета. */
+
+/* --- чтение .xlsx без внешних библиотек: ZIP + XML --- */
+async function readXlsx(file){
+  const buf=new Uint8Array(await file.arrayBuffer());
+  const dv=new DataView(buf.buffer,buf.byteOffset,buf.byteLength);
+  if(buf.length<4||dv.getUint32(0,true)!==0x04034b50)
+    throw new Error(/\.xls$/i.test(file.name)?'Это файл старого формата .xls. В 1С сохраните отчёт как «Лист Excel 2007 (.xlsx)».':'Файл не похож на .xlsx');
+  let eocd=-1;
+  for(let i=buf.length-22;i>=Math.max(0,buf.length-65557);i--){if(dv.getUint32(i,true)===0x06054b50){eocd=i;break;}}
+  if(eocd<0)throw new Error('Повреждённый .xlsx');
+  const n=dv.getUint16(eocd+10,true);let p=dv.getUint32(eocd+16,true);const files={};const td=new TextDecoder();
+  for(let i=0;i<n;i++){
+    if(dv.getUint32(p,true)!==0x02014b50)break;
+    const method=dv.getUint16(p+10,true),csize=dv.getUint32(p+20,true),nl=dv.getUint16(p+28,true),xl=dv.getUint16(p+30,true),cl=dv.getUint16(p+32,true),lho=dv.getUint32(p+42,true);
+    files[td.decode(buf.subarray(p+46,p+46+nl)).replace(/^\//,'')]={method,csize,lho};p+=46+nl+xl+cl;
+  }
+  async function read(name){
+    const f=files[name];if(!f)return null;
+    const start=f.lho+30+dv.getUint16(f.lho+26,true)+dv.getUint16(f.lho+28,true);
+    const data=buf.subarray(start,start+f.csize);
+    if(f.method===0)return td.decode(data);
+    if(f.method!==8)throw new Error('Неподдерживаемое сжатие в .xlsx');
+    const out=await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+    return td.decode(out);
+  }
+  const xml=s=>new DOMParser().parseFromString(s,'application/xml');
+  const tags=(node,t)=>Array.from(node.getElementsByTagNameNS('*',t));
+  // первый лист книги
+  let sheetPath=null;
+  const wb=await read('xl/workbook.xml'),rels=await read('xl/_rels/workbook.xml.rels');
+  if(wb&&rels){
+    const s0=tags(xml(wb),'sheet')[0];
+    const rid=s0&&(s0.getAttribute('r:id')||s0.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id'));
+    const rel=tags(xml(rels),'Relationship').find(r=>r.getAttribute('Id')===rid);
+    if(rel){const t=rel.getAttribute('Target').replace(/^\//,'');sheetPath=t.startsWith('xl/')?t:'xl/'+t;}
+  }
+  if(!sheetPath||!files[sheetPath])sheetPath=Object.keys(files).filter(k=>/^xl\/worksheets\/sheet\d*\.xml$/.test(k)).sort()[0];
+  if(!sheetPath)throw new Error('В файле нет листов');
+  const ssx=await read('xl/sharedStrings.xml');
+  const shared=ssx?tags(xml(ssx),'si').map(si=>tags(si,'t').map(t=>t.textContent).join('')):[];
+  const doc=xml(await read(sheetPath));
+  const rows=[];
+  const colIdx=ref=>{const m=/^([A-Z]+)/.exec(ref||'');let c=0;if(m)for(const ch of m[1])c=c*26+ch.charCodeAt(0)-64;return c-1;};
+  tags(doc,'row').forEach((r,ri)=>{
+    const rn=(parseInt(r.getAttribute('r'),10)||ri+1)-1;const row=rows[rn]=[];
+    tags(r,'c').forEach((c,ci)=>{
+      const col=c.getAttribute('r')?colIdx(c.getAttribute('r')):ci;const t=c.getAttribute('t');
+      const v=tags(c,'v')[0];let val='';
+      if(t==='s')val=v?(shared[+v.textContent]||''):'';
+      else if(t==='inlineStr')val=tags(c,'t').map(x=>x.textContent).join('');
+      else if(t==='str'||t==='e')val=v?v.textContent:'';
+      else if(t==='b')val=v?v.textContent==='1':'';
+      else val=v?Number(v.textContent):'';
+      row[col]=val;
+    });
+  });
+  for(let i=0;i<rows.length;i++)rows[i]=Array.from(rows[i]||[],v=>v===undefined||v===null?'':v); // без «дыр»: пустые ячейки — пустые строки
+  return rows;
+}
+
+/* --- разбор отчётов 1С --- */
+const IMP_STR=v=>v===undefined||v===null?'':String(v).replace(/\r/g,'').trim();
+function impNum(v){if(typeof v==='number')return v;const s=IMP_STR(v).replace(/\s|\u00a0/g,'').replace(',','.');const n=parseFloat(s);return isFinite(n)?n:0;}
+function impDate(v){
+  if(typeof v==='number'&&v>20000&&v<80000){const d=new Date(Math.round((v-25569)*86400000));return d.toISOString().slice(0,10);}
+  const m=/^(\d{2})\.(\d{2})\.(\d{4})/.exec(IMP_STR(v));return m?m[3]+'-'+m[2]+'-'+m[1]:null;
+}
+function impApt(s){
+  s=IMP_STR(s);let m;
+  if((m=/^(\d+[а-яА-Яa-zA-Z]?)\s*(квартира|кв\.?)(?=[\s.,]|$)/i.exec(s)))return m[1];
+  if((m=/^(кв\.?|квартира)\s*№?\s*(\d+[а-яА-Я]?)/i.exec(s)))return m[2];
+  if((m=/^(нежилое помещение|нп|н\/п)\s*№?\s*(\d+)/i.exec(s)))return 'НП'+m[2];
+  if((m=/^(\d+)\s*(нежилое|н\/п|нп)(?=[\s.,]|$)/i.exec(s)))return 'НП'+m[1];
+  return null;
+}
+function impSvc(s){s=IMP_STR(s).replace(/\.+$/,'').trim();return s||'Без услуги';}
+function impIsOrg(s){return /^(ГУ|ТОО|АО|ИП|КГУ|РГУ|ОО|ОСИ|ПК)(?=[\s"«]|$)|["«]/.test(IMP_STR(s));}
+
+function parseCard1c(rows){
+  let title=null,org=IMP_STR(rows[0]&&rows[0][0]),h=-1;
+  for(let i=0;i<Math.min(rows.length,30);i++){
+    const line=rows[i].map(IMP_STR).join(' ');
+    const m=/Карточка\s+сч[её]та\s+(\S+)\s+за\s+(\d{2}\.\d{2}\.\d{4})\s*-\s*(\d{2}\.\d{2}\.\d{4})/i.exec(line);
+    if(m)title={acct:m[1],from:impDate(m[2]),to:impDate(m[3])};
+    if(rows[i].some(c=>IMP_STR(c)==='Период')&&rows[i].some(c=>/^Документ/.test(IMP_STR(c)))){h=i;break;}
+  }
+  if(!title)throw new Error('Это не «Карточка счёта»: не найден заголовок «Карточка счета … за …»');
+  if(h<0)throw new Error('В карточке не найдена строка с заголовками колонок');
+  const H=rows[h].map(IMP_STR);const col=t=>H.findIndex(x=>x===t||x.startsWith(t));
+  const C={per:col('Период'),doc:col('Документ'),adt:col('Аналитика Дт'),akt:col('Аналитика Кт'),ind:col('Показатель'),dt:col('Дебет'),kt:col('Кредит')};
+  if(Object.values(C).some(x=>x<0))throw new Error('В карточке нет нужных колонок (Период, Документ, Аналитика Дт/Кт, Дебет, Кредит)');
+  const ops=[];
+  for(let i=h+1;i<rows.length;i++){
+    const r=rows[i];const date=impDate(r[C.per]);
+    if(!date||IMP_STR(r[C.ind])!=='БУ')continue;
+    const docLines=IMP_STR(r[C.doc]).split('\n');
+    ops.push({row:i,date,doc:docLines[0].trim(),oper:(docLines[1]||'').trim(),
+      adt:IMP_STR(r[C.adt]).split('\n').map(x=>x.trim()),akt:IMP_STR(r[C.akt]).split('\n').map(x=>x.trim()),
+      dacc:IMP_STR(r[C.dt]),kacc:IMP_STR(r[C.kt]),dsum:impNum(r[C.dt+1]),ksum:impNum(r[C.kt+1])});
+  }
+  if(!ops.length)throw new Error('В карточке нет операций');
+  return {org,acct:title.acct,from:title.from,to:title.to,ops};
+}
+
+function parseSubconto1c(rows){
+  let title=null,org=IMP_STR(rows[0]&&rows[0][0]),acct=null,h=-1;
+  for(let i=0;i<Math.min(rows.length,30);i++){
+    const line=rows[i].map(IMP_STR).join(' ');
+    const m=/Анализ\s+субконто.*?за\s+(\d{2}\.\d{2}\.\d{4})\s*-\s*(\d{2}\.\d{2}\.\d{4})/i.exec(line);
+    if(m)title={from:impDate(m[1]),to:impDate(m[2])};
+    const a=/Код\s+сч[её]та\s+Равно\s+"?(\d+)"?/i.exec(line);if(a)acct=a[1];
+    if(rows[i].some(c=>/Сальдо на начало/.test(IMP_STR(c)))){h=i;break;}
+  }
+  if(!title||h<0)throw new Error('Это не «Анализ субконто»: не найдены заголовок или колонки сальдо');
+  const H=rows[h].map(IMP_STR);
+  const cOpen=H.findIndex(x=>/Сальдо на начало/.test(x)),cTurn=H.findIndex(x=>/Обороты/.test(x)),cClose=H.findIndex(x=>/Сальдо на конец/.test(x));
+  const apts={};let cur=null;
+  for(let i=h+1;i<rows.length;i++){
+    const r=rows[i];const name=IMP_STR(r[0]);if(!name)continue;
+    if(/^Итого/i.test(name))break;
+    const apt=impApt(name);
+    if(apt){cur=apts[apt]={apt,open:impNum(r[cOpen])-impNum(r[cOpen+1]),dt:impNum(r[cTurn]),kt:impNum(r[cTurn+1]),close:impNum(r[cClose])-impNum(r[cClose+1]),contracts:[]};continue;}
+    if(cur&&!/^(Без договора|Договор\s*№)/i.test(name)&&!/^\d{4}$/.test(name)&&!/подразделение/i.test(name)){
+      // строка-договор под квартирой; строки-контрагенты (банк, ИП, ОСИ) прерывают квартиру
+      if(/банк|^(ИП|ОСИ|ТОО|АО)(?=[\s"«]|$)/i.test(name)&&!/Отдел/i.test(name)){cur=null;continue;}
+      cur.contracts.push(name);
+    }
+  }
+  if(!Object.keys(apts).length)throw new Error('В Анализе субконто не найдено ни одной квартиры');
+  return {org,acct,from:title.from,to:title.to,apts};
+}
+
+/* --- классификация проводок: что из них — жилец --- */
+function classifyCard(card){
+  const acct=card.acct;const res={moves:[],skipped:{},apts:{},services:{},periods:new Set()};
+  const occ={};
+  const aptSide=(an,acc)=>acc===acct?impApt(an[1]):null;
+  const touch=(apt,an)=>{const a=res.apts[apt]=res.apts[apt]||{apt,owners:{},acr:0,pay:0,xfer:0,ops:0};const o=IMP_STR(an[2]);if(o)a.owners[o]=(a.owners[o]||0)+1;a.ops++;return a;};
+  const svc=(name,kind,amt,acc)=>{const s=res.services[name]=res.services[name]||{name,acr:0,pay:0,count:0,accs:{}};s.count++;if(kind==='acr')s.acr+=amt;if(kind==='pay')s.pay+=amt;if(acc)s.accs[acc]=1;};
+  card.ops.forEach(o=>{
+    const amt=Math.round((o.dsum||o.ksum)*100)/100;if(!amt)return;
+    const base=[o.date,o.doc,o.dacc,o.kacc,o.adt.join('/'),o.akt.join('/'),amt].join('|');occ[base]=(occ[base]||0)+1;
+    const src=base+'#'+occ[base];const per=o.date.slice(0,7);
+    const ad=aptSide(o.adt,o.dacc),ak=aptSide(o.akt,o.kacc);
+    const mv=(type,apt,an,sign,kind)=>{const a=touch(apt,an);const sname=impSvc(an[3]);
+      res.moves.push({type,kind,apt,owner:IMP_STR(an[2]),svc:sname,amount:sign*amt,date:o.date,period:per,doc:o.doc,src:src+(type==='xfer'?(sign>0?'+':'-'):'')});
+      if(type==='acr')a.acr+=sign*amt;else if(type==='pay')a.pay+=sign*amt;else a.xfer+=sign*amt;
+      svc(sname,type==='pay'?'pay':'acr',sign*amt,type==='acr'?(sign>0?o.kacc:o.dacc):null);res.periods.add(per);};
+    if(ad&&ak){mv('xfer',ad,o.adt,1,'transfer');mv('xfer',ak,o.akt,-1,'transfer');}
+    else if(ad){if(o.kacc.startsWith('10'))mv('pay',ad,o.adt,-1,'refund');else mv('acr',ad,o.adt,1,'import');}
+    else if(ak){if(o.dacc.startsWith('10')||o.dacc===acct)mv('pay',ak,o.akt,1,'import');else mv('acr',ak,o.akt,-1,'writeoff');}
+    else{const k=o.doc.replace(/\s*\d{6,}.*$/,'').trim()||'Прочее';const s=res.skipped[k]=res.skipped[k]||{name:k,count:0,sum:0};s.count++;s.sum+=amt;}
+  });
+  return res;
+}
+
+/* --- экран импорта --- */
+let IMP=null; // {card, sub, cls, osiId, map, mode}
+VIEWS.import1c=function(){
+  let h=head('Импорт истории из 1С','Начисления и оплаты по квартирам — из «Карточки счёта» и «Анализа субконто»');
+  h+='<div class="card" style="margin-bottom:16px"><h3>1. Выгрузите из 1С два отчёта по счёту расчётов с жильцами</h3>'+
+    '<ol class="small" style="margin:10px 0 0 18px;line-height:1.7">'+
+    '<li><b>Карточка счёта</b> — Отчёты → Карточка счета (бух.) → счёт <b>1274</b> (у вашей 1С расчёты с жильцами на нём) → период с начала учёта по сегодня.</li>'+
+    '<li><b>Анализ субконто</b> — тот же период, виды субконто «Контрагенты, Договоры», отбор «Счёт Равно 1274». Из него берётся сальдо каждой квартиры на начало и проверка итога.</li>'+
+    '<li>Сохраните оба отчёта как <b>«Лист Excel 2007 (.xlsx)»</b> — не «.xls».</li></ol>'+
+    '<p class="small muted" style="margin-top:8px">Один файл — один дом. Повторная загрузка того же файла ничего не задвоит.</p></div>';
+  h+='<div class="card" style="margin-bottom:16px"><h3>2. Загрузите файлы</h3><div class="form-grid" style="margin-top:12px">'+
+    '<label class="fld full"><span>В какой ОСИ загружать</span><select id="im-osi"><option value="__new">+ Создать ОСИ по названию из файла</option>'+
+      DB.osi.map(o=>'<option value="'+o.id+'"'+(o.id===S.osi?' selected':'')+'>'+esc(o.name)+'</option>').join('')+'</select></label>'+
+    '<label class="fld"><span>Карточка счёта (.xlsx)*</span><input type="file" id="im-card" accept=".xlsx"></label>'+
+    '<label class="fld"><span>Анализ субконто (.xlsx)</span><input type="file" id="im-sub" accept=".xlsx"></label>'+
+    '<div class="full"><button class="btn" onclick="impCheck()">'+svg(IC.check)+'Проверить файлы</button></div></div></div>';
+  h+='<div id="im-out"></div>';
+  const hist=(DB.importLog||[]).filter(x=>x.batch).slice().reverse();
+  if(hist.length){
+    h+='<div class="card" style="margin-top:16px"><h3>Загрузки из 1С</h3><div class="t-wrap" style="border:none;margin-top:10px"><table><thead><tr><th>Когда</th><th>ОСИ</th><th>Файл</th><th>Период</th><th class="num">Операций</th><th>Кто</th><th></th></tr></thead><tbody>'+
+      hist.map(x=>{const o=DB.osi.find(z=>z.id===x.osiId)||{};const alive=DB.accruals.some(a=>a.batch===x.batch)||DB.payments.some(p=>p.batch===x.batch);
+        return '<tr><td class="small">'+esc(x.at||'')+'</td><td>'+esc(o.name||'—')+'</td><td class="small">'+esc(x.file||'')+'</td><td class="small">'+(x.from?perName(x.from.slice(0,7))+' — '+perName(x.to.slice(0,7)):'')+'</td>'+
+          '<td class="num">'+(x.ops||0)+'</td><td class="small muted">'+esc(x.by||'')+'</td><td class="num">'+(alive?'<button class="btn gho sm" onclick="impRollback(\''+x.batch+'\')">Отменить загрузку</button>':'<span class="small muted">отменена</span>')+'</td></tr>';}).join('')+
+      '</tbody></table></div></div>';
+  }
+  return h;
+};
+
+async function impCheck(){
+  const fc=document.getElementById('im-card').files[0],fs=document.getElementById('im-sub').files[0];
+  const out=document.getElementById('im-out');
+  if(!fc){toast('Выберите файл «Карточка счёта»','bad');return;}
+  out.innerHTML='<div class="card"><p class="small muted">Читаю файлы…</p></div>';
+  try{
+    const card=parseCard1c(await readXlsx(fc));
+    const sub=fs?parseSubconto1c(await readXlsx(fs)):null;
+    if(sub&&sub.acct&&sub.acct!==card.acct)throw new Error('Отчёты по разным счетам: карточка — '+card.acct+', анализ субконто — '+sub.acct);
+    const cls=classifyCard(card);
+    let osiId=val('im-osi');
+    IMP={card,sub,cls,osiId,file:fc.name+(fs?' + '+fs.name:''),map:{}};
+    impRender();
+  }catch(e){out.innerHTML='<div class="card"><p class="neg"><b>Не удалось прочитать:</b> '+esc(e.message||String(e))+'</p></div>';}
+}
+function impGuessFund(name){return /ремонт\s*мжд|капитал|капрем|накопит|вознагражд/i.test(name)?'savings':'current';}
+function impRender(){
+  const {card,sub,cls}=IMP;const osiId=val('im-osi')||IMP.osiId;IMP.osiId=osiId;
+  const osi=DB.osi.find(o=>o.id===osiId);const osiSvcs=osi?DB.services.filter(s=>s.osiId===osiId):[];
+  const aptKeys=[...new Set([...Object.keys(cls.apts),...(sub?Object.keys(sub.apts):[])])].sort((a,b)=>(parseInt(a,10)||1e9)-(parseInt(b,10)||1e9)||String(a).localeCompare(String(b)));
+  // сверка: входящее + движения = исходящее
+  let ok=0,bad=0;const rowsH=[];
+  aptKeys.forEach(k=>{const a=cls.apts[k]||{acr:0,pay:0,xfer:0,owners:{}};const s=sub&&sub.apts[k];
+    const open=s?s.open:0;const calc=open+a.acr-a.pay+a.xfer;const match=s?Math.abs(calc-s.close)<0.01:null;
+    if(match===true)ok++;else if(match===false)bad++;
+    const owners=Object.keys(a.owners);const contracts=s?s.contracts:[];const multi=new Set([...owners,...contracts]).size>1;
+    rowsH.push('<tr><td><b>'+esc(k)+'</b></td><td class="small">'+esc(owners.concat(contracts).filter((v,i,ar)=>ar.indexOf(v)===i).join(', '))+(multi?' <span class="pill warn">несколько плательщиков</span>':'')+'</td>'+
+      '<td class="num">'+money(open)+'</td><td class="num">'+money(a.acr)+'</td><td class="num pos">'+money(a.pay)+'</td><td class="num">'+(a.xfer?money(a.xfer):'—')+'</td>'+
+      '<td class="num" style="font-weight:700">'+money(calc)+'</td><td class="num">'+(s?money(s.close):'—')+'</td><td>'+(match===null?'—':match?'<span class="pill ok">✓</span>':'<span class="pill bad">расхождение</span>')+'</td></tr>');});
+  const per=[...cls.periods].sort();
+  const locked=osi?per.filter(p=>isLocked(osiId,p)):[];
+  const existingAcr=osi?DB.accruals.filter(a=>a.osiId===osiId).length:0,existingPay=osi?DB.payments.filter(p=>p.osiId===osiId).length:0;
+  const srcSet=new Set();if(osi){DB.accruals.forEach(a=>{if(a.osiId===osiId&&a.src)srcSet.add(a.src);});DB.payments.forEach(p=>{if(p.osiId===osiId&&p.src)srcSet.add(p.src);});}
+  const already=cls.moves.filter(m=>srcSet.has(m.src)).length;
+  const foreign=existingAcr+existingPay-(osi?DB.accruals.filter(a=>a.osiId===osiId&&a.src).length+DB.payments.filter(p=>p.osiId===osiId&&p.src).length:0);
+  if(!IMP.mode)IMP.mode=foreign>0?'replace':'append';
+  const totAcr=Object.values(cls.apts).reduce((s,a)=>s+a.acr,0),totPay=Object.values(cls.apts).reduce((s,a)=>s+a.pay,0);
+  let h='<div class="card" style="margin-bottom:16px"><h3>3. Проверка</h3>'+
+    '<div class="grid g4" style="margin:12px 0">'+kpi('','house','Квартир',aptKeys.length)+kpi('','calc','Начислено',money(totAcr))+kpi('g','money','Оплачено',money(totPay))+
+      kpi(sub?(bad?'r':'g'):'',sub?(bad?'alert':'check'):'doc','Сверка с 1С',sub?(bad?bad+' расхождений':'все '+ok+' сошлись'):'без Анализа субконто')+'</div>'+
+    '<p class="small">Файл: <b>'+esc(card.org)+'</b>, счёт '+esc(card.acct)+', '+fmtD(card.from)+' — '+fmtD(card.to)+'. Операций по квартирам: <b>'+cls.moves.length+'</b>'+(already?', из них уже загружено ранее: <b>'+already+'</b> — они будут пропущены':'')+'.</p>'+
+    (sub&&sub.from!==card.from?'<p class="small neg">Периоды отчётов не совпадают: карточка с '+fmtD(card.from)+', анализ субконто с '+fmtD(sub.from)+'. Входящее сальдо будет неверным — выгрузите оба отчёта за один период.</p>':'')+
+    (!sub?'<p class="small neg">Без «Анализа субконто» у квартир не будет входящего долга на '+fmtD(card.from)+' — история начнётся с нуля. Рекомендую добавить второй файл.</p>':'')+
+    (locked.length?'<p class="small neg">Закрытые периоды ('+locked.map(perName).join(', ')+') загружаться не будут.</p>':'')+'</div>';
+  // ОСИ
+  h+='<div class="card" style="margin-bottom:16px"><h3>Куда загружаем</h3><p class="small" style="margin-top:8px">'+(osi?'ОСИ <b>'+esc(osi.name)+'</b>':'Будет создан новый ОСИ <b>'+esc(card.org)+'</b>')+'</p>';
+  if(osi&&(existingAcr||existingPay)){
+    h+='<p class="small" style="margin-top:8px">В этом ОСИ уже есть '+existingAcr+' начислений и '+existingPay+' оплат.</p>'+
+      '<label class="small" style="display:flex;gap:8px;margin-top:8px;cursor:pointer"><input type="radio" name="im-mode" value="replace"'+(IMP.mode==='replace'?' checked':'')+' onchange="IMP.mode=this.value"> <span><b>Заменить</b> — удалить все начисления и оплаты этого ОСИ в открытых периодах и загрузить историю из 1С заново. Подходит, если раньше данные загружались другим способом.</span></label>'+
+      '<label class="small" style="display:flex;gap:8px;margin-top:6px;cursor:pointer"><input type="radio" name="im-mode" value="append"'+(IMP.mode==='append'?' checked':'')+' onchange="IMP.mode=this.value"> <span><b>Дозагрузить</b> — добавить только новые операции. Подходит для ежемесячной догрузки из той же 1С.</span></label>';
+  }
+  h+='</div>';
+  // услуги
+  h+='<div class="card" style="margin-bottom:16px"><h3>Услуги из 1С</h3><p class="small muted" style="margin-top:6px">Сопоставьте с услугами Turgyn или создайте новые. Важно указать счёт ОСИ: от этого зависит раздел «Капремонт».</p>'+
+    '<div class="t-wrap" style="border:none;margin-top:10px"><table><thead><tr><th>Услуга в 1С</th><th class="num">Начислено</th><th class="num">Оплачено</th><th>В Turgyn</th><th>Счёт ОСИ</th></tr></thead><tbody>';
+  IMP.svcList=Object.values(cls.services).sort((a,b)=>b.count-a.count).map(s=>s.name);
+  Object.values(cls.services).sort((a,b)=>b.count-a.count).forEach((s,i)=>{
+    const ex=osiSvcs.find(x=>x.name.toLowerCase().replace(/\.+$/,'')===s.name.toLowerCase());
+    const m=IMP.map[s.name]=IMP.map[s.name]||{target:ex?ex.id:'__new',fund:ex?svcFund(ex):impGuessFund(s.name)};
+    h+='<tr><td><b>'+esc(s.name)+'</b>'+(Object.keys(s.accs).length?'<div class="small muted">счёт дохода '+Object.keys(s.accs).join(', ')+'</div>':'')+'</td><td class="num">'+money(s.acr)+'</td><td class="num">'+money(s.pay)+'</td>'+
+      '<td><select onchange="IMP.map[IMP.svcList['+i+']].target=this.value"><option value="__new"'+(m.target==='__new'?' selected':'')+'>+ Создать «'+esc(s.name)+'»</option>'+
+        osiSvcs.map(x=>'<option value="'+x.id+'"'+(m.target===x.id?' selected':'')+'>'+esc(x.name)+'</option>').join('')+'</select></td>'+
+      '<td><select onchange="IMP.map[IMP.svcList['+i+']].fund=this.value"><option value="current"'+(m.fund==='current'?' selected':'')+'>Текущий</option><option value="savings"'+(m.fund==='savings'?' selected':'')+'>Сберегательный</option></select></td></tr>';});
+  h+='</tbody></table></div></div>';
+  // квартиры
+  h+='<div class="card" style="margin-bottom:16px"><h3>Квартиры: сверка сальдо</h3><p class="small muted" style="margin-top:6px">Сальдо на конец = входящее + начислено − оплачено ± переносы. Должно совпасть с 1С. Минус — переплата.</p>'+
+    '<div class="t-wrap" style="border:none;margin-top:10px"><table><thead><tr><th>Кв.</th><th>Собственник</th><th class="num">На '+fmtD(card.from)+'</th><th class="num">Начислено</th><th class="num">Оплачено</th><th class="num">Переносы</th><th class="num">Итог Turgyn</th><th class="num">Итог 1С</th><th></th></tr></thead><tbody>'+rowsH.join('')+'</tbody></table></div></div>';
+  // пропущено
+  const sk=Object.values(cls.skipped);
+  if(sk.length)h+='<div class="card" style="margin-bottom:16px"><h3>Не относится к квартирам — пропускается</h3><p class="small muted" style="margin-top:6px">Поступления на расчётный счёт до разноски, комиссии банка, расчёты с соседними ОСИ. Деньги жильцов при этом не теряются: они учтены в строках «Оплата жильцов» по каждой квартире.</p>'+
+    '<div class="t-wrap" style="border:none;margin-top:10px"><table><thead><tr><th>Документ</th><th class="num">Строк</th><th class="num">Сумма</th></tr></thead><tbody>'+
+    sk.map(s=>'<tr><td class="small">'+esc(s.name)+'</td><td class="num">'+s.count+'</td><td class="num">'+money(s.sum)+'</td></tr>').join('')+'</tbody></table></div></div>';
+  h+='<div class="card"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
+    '<button class="btn" onclick="impRun()">'+svg(IC.check)+'Загрузить в Turgyn</button><button class="btn gho" onclick="IMP=null;go(\'import1c\')">Отмена</button>'+
+    (bad?'<span class="small neg">Есть расхождения со сверкой — проверьте, что оба отчёта за один период и по одному счёту.</span>':'')+'</div></div>';
+  document.getElementById('im-out').innerHTML=h;
+}
+function fmtD(d){if(!d)return '';const p=d.split('-');return p[2]+'.'+p[1]+'.'+p[0];}
+
+async function impRun(){
+  const {card,sub,cls}=IMP;
+  let osiId=IMP.osiId;const bad=document.querySelector('#im-out .pill.bad');
+  if(bad&&!confirm('Сверка с 1С не сошлась по части квартир. Всё равно загрузить?'))return;
+  const batch=uid('imp');const now=nowStr();
+  // ОСИ
+  if(!osiId||osiId==='__new'){const o={id:uid('osi'),name:card.org||'ОСИ',bin:'',city:DB.org.city||'',address:'',chairman:'',phone:'',iban:'',bank:'',createdAt:today(),active:true};DB.osi.push(o);osiId=o.id;}
+  const house=ensureHouse(osiId);
+  // услуги
+  const svcId={};
+  Object.keys(IMP.map).forEach(name=>{const m=IMP.map[name];
+    if(m.target&&m.target!=='__new'){svcId[name]=m.target;const s=DB.services.find(x=>x.id===m.target);if(s&&!s.fund)s.fund=m.fund;}
+    else{const s={id:uid('svc'),osiId,name,tariff:0,unit:'m2',fund:m.fund,active:true,source:'1С'};DB.services.push(s);svcId[name]=s.id;}});
+  // замена: убираем прежние данные ОСИ в открытых периодах
+  let removed=0;const prevSaldo={};
+  if(IMP.mode==='replace'){
+    const keep=x=>x.osiId!==osiId||isLocked(osiId,x.period);
+    const b=DB.accruals.length+DB.payments.length;
+    DB.accruals=DB.accruals.filter(keep);DB.payments=DB.payments.filter(keep);removed=b-DB.accruals.length-DB.payments.length;
+  }
+  // квартиры
+  const accOf={};
+  const keys=new Set([...Object.keys(cls.apts),...(sub?Object.keys(sub.apts):[])]);
+  keys.forEach(k=>{
+    let a=DB.accounts.find(x=>x.osiId===osiId&&String(x.apt).trim()===String(k));
+    const info=cls.apts[k]||{owners:{}};const subA=sub&&sub.apts[k];
+    const names=Object.keys(info.owners).sort((x,y)=>info.owners[y]-info.owners[x]).concat(subA?subA.contracts:[]);
+    const owner=names.find(n=>!impIsOrg(n))||names[0]||('Кв. '+k);
+    if(!a){a={id:uid('acc'),osiId,houseId:house.id,ls:String(k),apt:String(k),floor:0,area:0,owner,phone:'',persons:1,saldoStart:0};DB.accounts.push(a);}
+    else if(!a.owner||/^Кв\./.test(a.owner))a.owner=owner;
+    const payers=names.filter(n=>n!==owner);if(payers.length)a.otherPayers=[...new Set(payers)];
+    if(subA&&(IMP.mode==='replace'||!a.saldoSrc)){prevSaldo[a.id]={saldoStart:a.saldoStart||0,saldoBySvc:a.saldoBySvc||null,saldoDate:a.saldoDate||null};
+      a.saldoStart=Math.round(subA.open*100)/100;delete a.saldoBySvc;a.saldoDate=card.from;a.saldoSrc=batch;}
+    accOf[k]=a.id;
+  });
+  // операции
+  const srcSet=new Set();DB.accruals.forEach(a=>{if(a.osiId===osiId&&a.src)srcSet.add(a.src);});DB.payments.forEach(p=>{if(p.osiId===osiId&&p.src)srcSet.add(p.src);});
+  let nA=0,nP=0,skipLocked=0,skipDup=0;
+  cls.moves.forEach(m=>{
+    if(srcSet.has(m.src)){skipDup++;return;}
+    if(isLocked(osiId,m.period)){skipLocked++;return;}
+    const base={id:uid(m.type==='pay'?'pay':'acr'),osiId,accountId:accOf[m.apt],serviceId:svcId[m.svc],period:m.period,amount:m.amount,date:m.date,kind:m.kind,doc:m.doc,src:m.src,batch,payer:m.owner||null};
+    if(m.type==='pay'){DB.payments.push(Object.assign(base,{method:'bank'}));nP++;}
+    else{DB.accruals.push(Object.assign(base,{createdAt:m.date}));nA++;}
+  });
+  DB.importLog=(DB.importLog||[]).concat([{period:'1С '+batch,batch,osiId,file:IMP.file,at:now,by:S.user.login,from:card.from,to:card.to,ops:nA+nP,accruals:nA,payments:nP,removed,prevSaldo}]);
+  S.osi=osiId;IMP=null;save();await flushSave();
+  renderOsiPicker();go('import1c');
+  toast('Загружено: начислений '+nA+', оплат '+nP+(skipDup?', пропущено повторов '+skipDup:'')+(skipLocked?', пропущено в закрытых периодах '+skipLocked:''),'ok');
+}
+
+function impRollback(batch){
+  const log=(DB.importLog||[]).find(x=>x.batch===batch);if(!log)return;
+  const rows=DB.accruals.filter(a=>a.batch===batch).concat(DB.payments.filter(p=>p.batch===batch));
+  const lockedP=[...new Set(rows.filter(r=>isLocked(r.osiId,r.period)).map(r=>r.period))];
+  if(lockedP.length){toast('Нельзя отменить: часть данных в закрытых периодах ('+lockedP.map(perName).join(', ')+')','bad');return;}
+  if(!confirm('Отменить загрузку из 1С от '+log.at+'?\n\nБудет удалено '+rows.length+' записей, входящее сальдо квартир вернётся к прежнему. Данные, удалённые при этой загрузке в режиме «Заменить», не восстановятся — для этого используйте резервную копию.'))return;
+  DB.accruals=DB.accruals.filter(a=>a.batch!==batch);DB.payments=DB.payments.filter(p=>p.batch!==batch);
+  Object.keys(log.prevSaldo||{}).forEach(id=>{const a=DB.accounts.find(x=>x.id===id);if(!a||a.saldoSrc!==batch)return;const p=log.prevSaldo[id];
+    a.saldoStart=p.saldoStart;if(p.saldoBySvc)a.saldoBySvc=p.saldoBySvc;else delete a.saldoBySvc;if(p.saldoDate)a.saldoDate=p.saldoDate;else delete a.saldoDate;delete a.saldoSrc;});
+  save();go('import1c');toast('Загрузка отменена','ok');
+}
 
 /* ================= INIT ================= */
 initDB(function(restored){
