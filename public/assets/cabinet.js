@@ -884,7 +884,8 @@ VIEWS.services=function(){
     h+='<tr><td><b>'+esc(s.name)+'</b></td><td class="mono">'+money(s.tariff)+' / '+unitName(s.unit)+'</td>'+
       '<td>'+unitFull(s.unit)+'</td><td class="num">'+money(ex)+'</td>'+
       '<td>'+(s.active!==false?'<span class="pill ok">Активна</span>':'<span class="pill mut">Откл.</span>')+'</td>'+
-      '<td class="num"><button class="btn gho sm" onclick="svcForm(\''+s.id+'\')">'+svg(IC.edit)+'</button></td></tr>';});
+      '<td class="num" style="white-space:nowrap"><button class="btn gho sm" title="Редактировать" onclick="svcForm(\''+s.id+'\')">'+svg(IC.edit)+'</button> '+
+      '<button class="btn gho sm" title="Удалить" onclick="svcDel(\''+s.id+'\')">'+svg(IC.trash)+'</button></td></tr>';});
   h+='</tbody></table></div>';
   return h;
 };
@@ -899,14 +900,36 @@ function svcForm(id){const s=id?DB.services.find(x=>x.id===id):{unit:'m2'};
     '</select></label>'+
     '<label class="fld full"><span>Куда зачисляются деньги</span><select id="sf-fund">'+
       '<option value="current"'+(svcFund(s)==='current'?' selected':'')+'>Текущий счёт — содержание дома</option>'+
-      '<option value="savings"'+(svcFund(s)==='savings'?' selected':'')+'>Сберегательный счёт — капитальный ремонт</option></select></label></div>',
+      '<option value="savings"'+(svcFund(s)==='savings'?' selected':'')+'>Сберегательный счёт — капитальный ремонт</option></select></label>'+
+    '<label class="fld full"><span>Статус</span><select id="sf-active">'+
+      '<option value="1"'+(s.active!==false?' selected':'')+'>Активна — начисляется жителям</option>'+
+      '<option value="0"'+(s.active===false?' selected':'')+'>Отключена — не начисляется</option></select></label></div>',
     '<button class="btn gho" onclick="closeModal()">Отмена</button><button class="btn" onclick="svcSave(\''+(id||'')+'\')">'+svg(IC.check)+'Сохранить</button>');}
 function svcSave(id){const name=val('sf-name'),tariff=parseFloat(val('sf-tariff'))||0;
   if(!name){toast('Укажите наименование','bad');return;}
-  const d={name,tariff,unit:val('sf-unit'),fund:val('sf-fund')||'current',active:true};
+  const d={name,tariff,unit:val('sf-unit'),fund:val('sf-fund')||'current',active:val('sf-active')!=='0'};
   if(id)Object.assign(DB.services.find(x=>x.id===id),d);
   else DB.services.push({id:uid('svc'),osiId:S.osi,...d});
   save();closeModal();go('services');toast('Сохранено','ok');}
+/* Где используется услуга: начисления, оплаты, входящее сальдо квартир */
+function svcUsage(id){
+  const acr=DB.accruals.filter(x=>x.serviceId===id).length;
+  const pay=DB.payments.filter(x=>x.serviceId===id).length;
+  const sal=DB.accounts.filter(a=>a.saldoBySvc&&Math.round((a.saldoBySvc[id]||0)*100)!==0).length;
+  return {acr,pay,sal,total:acr+pay+sal};}
+/* Удаление услуги без истории: убираем запись и пустые ключи сальдо */
+function svcPurge(id){
+  DB.services=DB.services.filter(x=>x.id!==id);
+  DB.accounts.forEach(a=>{if(a.saldoBySvc&&id in a.saldoBySvc)delete a.saldoBySvc[id];});}
+function svcDel(id){const s=DB.services.find(x=>x.id===id);if(!s)return;
+  const u=svcUsage(id);
+  if(u.total){
+    const parts=[];if(u.acr)parts.push('начислений: '+u.acr);if(u.pay)parts.push('оплат: '+u.pay);if(u.sal)parts.push('квартир с сальдо по услуге: '+u.sal);
+    if(s.active===false){alert('Услугу «'+s.name+'» нельзя удалить — по ней есть история ('+parts.join(', ')+').\n\nОна уже отключена и не начисляется. Чтобы удалить её полностью, сначала отмените загрузку из 1С или удалите эти записи.');return;}
+    if(!confirm('Услугу «'+s.name+'» нельзя удалить — по ней есть история ('+parts.join(', ')+'). Удаление сломало бы сальдо и квитанции.\n\nОтключить услугу? Она перестанет начисляться, история сохранится.'))return;
+    s.active=false;save();go('services');toast('Услуга отключена','ok');return;}
+  if(!confirm('Удалить услугу «'+s.name+'»?\n\nПо ней нет начислений, оплат и сальдо.'))return;
+  svcPurge(id);save();go('services');toast('Услуга удалена','ok');}
 function today(){return new Date().toISOString().slice(0,10);}
 function nowStr(){return new Date().toISOString().slice(0,16).replace('T',' ');}
 function logImport(period,file,extra){DB.importLog=(DB.importLog||[]).filter(x=>x.period!==period);
@@ -2793,7 +2816,8 @@ function impRollback(batch){
   DB.accruals=DB.accruals.filter(a=>a.batch!==batch);DB.payments=DB.payments.filter(p=>p.batch!==batch);
   Object.keys(log.prevSaldo||{}).forEach(id=>{const a=DB.accounts.find(x=>x.id===id);if(!a||a.saldoSrc!==batch)return;const p=log.prevSaldo[id];
     a.saldoStart=p.saldoStart;if(p.saldoBySvc)a.saldoBySvc=p.saldoBySvc;else delete a.saldoBySvc;if(p.saldoDate)a.saldoDate=p.saldoDate;else delete a.saldoDate;delete a.saldoSrc;});
-  save();go('import1c');toast('Загрузка отменена','ok');
+  let svcGone=0;DB.services.filter(s=>s.osiId===log.osiId&&s.source==='1С'&&!svcUsage(s.id).total).forEach(s=>{svcPurge(s.id);svcGone++;});
+  save();go('import1c');toast('Загрузка отменена'+(svcGone?', удалено услуг из 1С: '+svcGone:''),'ok');
 }
 
 /* ================= INIT ================= */
