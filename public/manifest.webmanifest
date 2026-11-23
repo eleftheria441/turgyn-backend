@@ -1,0 +1,18 @@
+{
+  "name": "Turgyn — ОСИ и УК",
+  "short_name": "Turgyn",
+  "description": "Баланс, оплата и заявки для жителей; должники и заявки для управляющей компании.",
+  "lang": "ru",
+  "id": "/app",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0c2a24",
+  "theme_color": "#0c2a24",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

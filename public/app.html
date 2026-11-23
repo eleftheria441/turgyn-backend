@@ -2,60 +2,77 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Turgyn App — приложение жителя</title>
-<link rel="stylesheet" href="/assets/app.css?v=6">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Turgyn</title>
+<meta name="theme-color" content="#0c2a24">
+<meta name="description" content="Turgyn — приложение для жителей и управляющей компании: баланс, оплата, заявки, должники.">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Turgyn">
+<link rel="stylesheet" href="/assets/app.css?v=7">
 </head>
 <body>
 <div id="frame">
 
-  <!-- AUTH -->
+  <!-- ВХОД -->
   <div id="auth">
-    <div class="a-logo"><span class="m"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3fe6c0" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5 12 4.5l7.5 6"/><path d="M8.2 11.5v3.6a3.8 3.8 0 0 0 7.6 0v-3.6"/></svg></span><span><b>tur</b><span>gyn</span> app</span></div>
-    <p class="sub">Приложение жителя · баланс, оплата, заявки, ИИ-помощник</p>
-    <!-- шаг 1: телефон -->
+    <div class="a-logo"><span class="m"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3fe6c0" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5 12 4.5l7.5 6"/><path d="M8.2 11.5v3.6a3.8 3.8 0 0 0 7.6 0v-3.6"/></svg></span><span><b>tur</b><span>gyn</span></span></div>
+    <p class="sub">Баланс, оплата и заявки по вашему дому</p>
+
+    <div class="a-seg" id="au-seg">
+      <button class="on" data-m="res" onclick="authMode('res')">Я житель</button>
+      <button data-m="staff" onclick="authMode('staff')">Я сотрудник</button>
+    </div>
+
+    <!-- житель: шаг 1 -->
     <div id="au-step-phone">
       <label>Номер телефона</label>
       <input id="au-key" type="tel" inputmode="tel" placeholder="+7 777 000 00 00" autocomplete="tel">
       <button class="a-btn" id="au-send-btn" onclick="authRequestCode()">Получить код</button>
-      <div class="a-hint">Код придёт SMS на номер, привязанный к вашему лицевому счёту.<br>Если номер не подходит — обратитесь в УК.</div>
+      <div class="a-hint">Код придёт SMS на номер, привязанный к вашей квартире.<br>Если управляющая компания прислала вам ссылку-приглашение — просто откройте её.</div>
     </div>
-
-    <!-- шаг 2: код из SMS -->
+    <!-- житель: шаг 2 -->
     <div id="au-step-code" class="hidden">
       <div class="a-back" onclick="authBackToPhone()">‹ Изменить номер</div>
       <label>Код из SMS <span id="au-phone-lbl" class="a-ph"></span></label>
-      <input id="au-code" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code"
-             class="a-code" placeholder="——————" oninput="authCodeInput()">
+      <input id="au-code" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" class="a-code" placeholder="——————" oninput="authCodeInput()">
       <button class="a-btn" id="au-verify-btn" onclick="authVerifyCode()">Войти</button>
       <div class="a-resend" id="au-resend"></div>
+    </div>
+    <!-- сотрудник -->
+    <div id="au-staff" class="hidden">
+      <label>Логин</label>
+      <input id="st-login" autocomplete="username" autocapitalize="off" spellcheck="false">
+      <label>Пароль</label>
+      <input id="st-pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')staffLogin()">
+      <button class="a-btn" id="st-btn" onclick="staffLogin()">Войти</button>
+      <div class="a-hint">Те же логин и пароль, что в кабинете на turgyn.kz</div>
     </div>
 
     <div id="au-results" class="a-list"></div>
     <div id="au-err" class="a-err hidden"></div>
+    <div id="au-install"></div>
   </div>
 
-  <!-- APP -->
-  <div id="app" class="hidden" style="display:flex;flex-direction:column;min-height:100vh;position:relative">
+  <!-- ПРИЛОЖЕНИЕ -->
+  <div id="app" class="hidden">
     <div class="hdr">
+      <div class="back hidden" id="h-back" onclick="goBack()">‹</div>
       <div class="who"><b id="h-name">—</b><span id="h-addr">—</span></div>
       <div class="sp"></div>
-      <button class="ic-btn" title="Уведомления" onclick="tab('notif')">🔔</button>
+      <button class="ic-btn" id="h-refresh" title="Обновить" onclick="refresh()">⟳</button>
     </div>
     <div class="scr" id="scr"></div>
-    <div class="bnav">
-      <button class="it on" data-t="home" onclick="tab('home')">🏠<span>Главная</span></button>
-      <button class="it" data-t="bills" onclick="tab('bills')">🧾<span>Начисления</span></button>
-      <button class="it" data-t="req" onclick="tab('req')">🛠<span>Заявки</span></button>
-      <button class="it" data-t="ai" onclick="tab('ai')">✦<span>ИИ-чат</span></button>
-      <button class="it" data-t="profile" onclick="tab('profile')">👤<span>Профиль</span></button>
-    </div>
+    <div class="bnav" id="bnav"></div>
   </div>
 
 </div>
 <div id="modal-root"></div>
 <div id="toast"></div>
-
-<script src="/assets/app.js?v=6"></script>
+<script src="/assets/app.js?v=7"></script>
 </body>
 </html>

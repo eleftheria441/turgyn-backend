@@ -33,10 +33,15 @@ app.use('/api/auth', require('./src/routes/auth'));
 app.use('/api/state', require('./src/routes/state'));
 app.use('/api/resident', require('./src/routes/resident'));
 app.use('/api/leads', require('./src/routes/leads'));
+app.use('/api/mobile', require('./src/routes/mobile'));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Не найдено' }));
 
+// Приложение (PWA): /app — для жителей и сотрудников. Service worker должен отдаваться с корня, без долгого кеша.
+app.get(['/app', '/app/'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
+app.get('/app.html', (req, res) => res.redirect(301, '/app'));
+app.get('/sw.js', (req, res) => { res.set('Cache-Control', 'no-cache'); res.set('Service-Worker-Allowed', '/'); res.sendFile(path.join(__dirname, 'public', 'sw.js')); });
+app.get('/manifest.webmanifest', (req, res) => { res.type('application/manifest+json'); res.sendFile(path.join(__dirname, 'public', 'manifest.webmanifest')); });
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
-app.get('/app.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
 app.get(['/cabinet', '/cabinet/'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'cabinet.html')));
 app.get('/cabinet.html', (req, res) => res.redirect(301, '/cabinet'));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));

@@ -213,6 +213,39 @@ router.post('/verify-code', codeLimiter, async (req, res) => {
   res.json({ token });
 });
 
+/* --- вход по ссылке-приглашению от УК (без SMS) --- */
+const redeemLimiter = auth.rateLimit({ windowMs: 60 * 60 * 1000, max: 30, key: (req) => req.ip, message: 'Слишком много попыток. Попробуйте через час.' });
+router.post('/redeem', redeemLimiter, async (req, res) => {
+  const token = String((req.body || {}).token || '').trim();
+  if (!/^[A-Za-z0-9_-]{20,64}$/.test(token)) return res.status(400).json({ error: 'Ссылка повреждена. Попросите в УК новую.' });
+  const key = 'inv:' + crypto.createHash('sha256').update(token).digest('hex');
+  const rec = await store.getCode(key);
+  if (!rec) return res.status(400).json({ error: 'Ссылка уже использована или устарела. Попросите в УК новую.' });
+  await store.deleteCode(key); // одноразовая
+  const account = await store.getById('accounts', rec.accountId);
+  if (!account) return res.status(404).json({ error: 'Лицевой счёт не найден' });
+  const t = await auth.createSession({ type: 'resident', accountId: account.id, osiId: account.osiId });
+  await store.audit('resident:' + account.id, 'resident_invite_used', { by: rec.by });
+  res.json({ token: t });
+});
+
+/* --- показания счётчиков: уходят в УК заявкой --- */
+router.post('/meters', auth.requireResident(), requestLimiter, async (req, res) => {
+  const b = req.body || {};
+  const vals = [['Холодная вода', b.cold], ['Горячая вода', b.hot], ['Электричество', b.power], ['Газ', b.gas]]
+    .map(([n, v]) => [n, String(v == null ? '' : v).replace(',', '.').trim()])
+    .filter(([, v]) => v !== '');
+  if (!vals.length) return res.status(400).json({ error: 'Укажите хотя бы одно показание' });
+  if (vals.some(([, v]) => !/^\d{1,7}(\.\d{1,3})?$/.test(v))) return res.status(400).json({ error: 'Показания — числа, например 84.2' });
+  const account = await store.getById('accounts', req.session.accountId);
+  if (!account) return res.status(404).json({ error: 'Лицевой счёт не найден' });
+  const request = { id: uid('req'), osiId: account.osiId, accountId: account.id, kind: 'meters',
+    topic: 'Показания счётчиков: ' + vals.map(([n, v]) => n + ' ' + v).join(', '),
+    meters: Object.fromEntries(vals), assignee: '—', status: 'new', date: new Date().toISOString().slice(0, 10), source: 'app' };
+  await store.insertOne('requests', request, 'resident:' + account.id);
+  res.json({ ok: true, request });
+});
+
 router.post('/logout', auth.requireResident(), async (req, res) => {
   await auth.destroySession(req.token);
   res.json({ ok: true });
